@@ -238,7 +238,7 @@ static int s25fs_restore_cr3nv(struct flashctx *flash, uint8_t cfg)
 }
 
 int s25fs_block_erase_d8(struct flashctx *flash,
-			 uint32_t addr, uint32_t blocklen)
+			 unsigned int addr, unsigned int blocklen)
 {
 	static int cr3nv_checked = 0;
 
@@ -302,7 +302,7 @@ int s25fs_block_erase_d8(struct flashctx *flash,
 }
 
 int s25fl_block_erase(struct flashctx *flash,
-		      uint32_t addr, uint32_t blocklen)
+		      unsigned int addr, unsigned int blocklen)
 {
 	struct spi_command erase_cmds[] = {
 		{
