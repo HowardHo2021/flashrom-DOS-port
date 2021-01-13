@@ -1,6 +1,5 @@
--------------------------------------------------------------------------------
 flashrom for DOS README
--------------------------------------------------------------------------------
+-----------------------
 
 NOTE: This repo is forked from the official flashrom repo located at:
 https://review.coreboot.org/cgit/flashrom.git with certain modifications
