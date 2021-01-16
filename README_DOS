@@ -1,12 +1,12 @@
-Flashrom for DOS - BKC Compilation Guide:
+Flashrom for DOS - Compilation Guide:
 
-By Howard Ho - January 13, 2021
+By Howard Ho - Last Updated: January 15, 2021
 
-You are welcome to use my pre-compiled binary compiled on Ubuntu Mate 20.04 LTS x86_64 on Jan. 13, 2021 (under Releases on GitHub) or to recompile from sources used by yourself, which will require an Internet connection and is recommended only if the pre-compiled binary does not work on your system or you really want to compile it yourself. NOTE: I have only tested compilation on Linux (tested on Ubuntu Mate 20.04 LTS x86_64 only).
+You are welcome to use my pre-compiled binary compiled for DOS on Ubuntu Mate 20.04 LTS x86_64 available under Releases on GitHub. Alternatively, you can compile your own copy from the source code in this repository, which will require an Internet connection (if the prerequisites are not yet installed on your system), and is recommended only if the pre-compiled binary does not work on your system or you really want to compile it yourself. NOTE: I have only tested compilation on Linux (tested on Ubuntu Mate 20.04 LTS x86_64).
 
-NOTE: Some small changes were made to the flashrom source code to get it to cross-compile to DOS (check exact changes made by checking the commits I made). Keep these changes in mind if you decide to download the source code again yourself. If you delete existing folders, you must re-create the folders with the names below or change the names in the commands below to reflect your created folders.
+NOTE: Some small changes were made to the flashrom source code to get it to cross-compile to DOS (you may see the exact changes I made by checking the commit history). Keep these changes in mind if you decide to cross-compile to DOS from the original/unmodified flashrom source code.
 
-BKC Compilation steps if you want to compile flashrom for DOS yourself (otherwise, use the pre-compiled binaries under Releases):
+Compilation steps if you want to compile flashrom for DOS yourself using the modified source code I have provided in this repository instead of using my pre-compiled binaries under Releases:
 
 0. Open a Terminal window. CD to this folder.
 1. Unzip the necessary build libraries and files compressed in build_libs_files.tar.xz by running "tar -xvf build_libs_files.tar.xz".
@@ -22,15 +22,17 @@ BKC Compilation steps if you want to compile flashrom for DOS yourself (otherwis
 5. CD to pciutils-3.6.4-DOS folder. Compile libpci by running "make ZLIB=no DNS=no HOST=i386-djgpp-djgpp CROSS_COMPILE=/usr/local/djgpp/bin/i586-pc-msdosdjgpp- PREFIX=/ DESTDIR=$PWD/../libpci-libgetopt-364/ STRIP="--strip-program=/usr/local/djgpp/bin/i586-pc-msdosdjgpp-strip -s" install install-lib -j $(nproc)" within the pciutils-3.6.4-DOS folder. CD back to the root folder (where this file is).
 6. CD to libgetopt folder. Compile libgetopt by running "make -j $(nproc)" within the libgetopt folder.
 7. Copy the libgetopt.a to ../libpci-libgetopt-364/lib and getopt.h to ../libpci-libgetopt-364/include folders. CD back to the root folder (where this file is).
-8. CD to root folder where this file is (and where the flashrom source files are). NOTE: You can check if updates were made to flashrom since Jan. 13, 2021 by running "git pull" in this folder (note that this MAY result in merge conflicts that you will need to resolve manually). If there were updates, you should now run "make clean" to remove old compiled binaries and modify the versioninfo.inc file with the date that you updated the source files. Compile flashrom by running "make CC=/usr/local/djgpp/bin/i586-pc-msdosdjgpp-gcc STRIP=/usr/local/djgpp/bin/i586-pc-msdosdjgpp-strip LIBS_BASE=$PWD/libpci-libgetopt-364/ strip CONFIG_ENABLE_LIBUSB1_PROGRAMMERS=no -j $(nproc)" within this folder.
+8. CD to root folder where this file is (and where the flashrom source files are). Compile flashrom by running "make CC=/usr/local/djgpp/bin/i586-pc-msdosdjgpp-gcc STRIP=/usr/local/djgpp/bin/i586-pc-msdosdjgpp-strip LIBS_BASE=$PWD/libpci-libgetopt-364/ strip CONFIG_ENABLE_LIBUSB1_PROGRAMMERS=no -j $(nproc)" within this folder.
 9. If compilation was successful, you will notice that flashrom.exe has been created in the current root folder.
-10. Copy CWSDPMI and flashrom to where you will use it (DOS USB etc.). NOTE: You must include CWSDPMI.EXE at the minimal along with flashrom.exe!
-11. If you wish to compress your compiled flashrom.exe (maybe you want to fit it on a 1.44 MB DOS floppy), you may use UPX. CD to the upx-3.96-i386_linux folder and run "upx -9 ./path_to_created_folder/*.exe" where "path_to_created_folder" is where you put CWSDPMI and flashrom to pack flashrom.exe.
+10. Copy CWSDPMI.EXE from the CWSDPMI folder and flashrom.exe to where you will use it (bootable DOS USB, floppy etc.). NOTE: You must include CWSDPMI.EXE along with flashrom.exe!
+11. If you wish to compress your compiled flashrom.exe (maybe you want to fit it on a 1.44 MB DOS floppy along with other files), you may use UPX. CD to the upx-3.96-i386_linux folder and run "upx -9 ./path_to_created_folder/*.exe" where "path_to_created_folder" is where you put CWSDPMI and flashrom to pack flashrom.exe.
 12. GOOD LUCK!
 
 Test results:
 
-My pre-compiled flashrom binary was:
+NOTE: If my flashrom for DOS port worked for you, please let me know. Email reports to: howardho2021@berkeley.edu.
+
+My pre-compiled flashrom binary (Jan. 13, 2021 release version) was:
 
 Successfully tested on the following:
 1. Gigabyte X570 AORUS ELITE WIFI motherboard with F31q BIOS on both FreeDOS (created by Rufus) and MS-DOS (based on Windows 98 SE bootable disk files used into HPUSBFW) bootable USB environments. Tested both read and write functions with "internal" programmer.
@@ -45,7 +47,10 @@ Failed on the following:
 2. HP Chromebook "SNAPPY" via RW_LEGACY boot FW - read failed due to SPI flash recognition issues (recommend to enable Chrome OS developer mode and use installed flashrom within built-in "crosh" shell).
 3. IBM 4838-74E - tested only with MS-DOS (based on Windows 98 SE bootable disk files used into HPUSBFW) bootable USB environment currently (read caused hang).
 4. Lenovo ThinkPad E14 Gen 2 and Microsoft Surface Laptop 2 - no legacy boot support (successfully used flashrom on EFI-booting Linux instead).
-5. Apple MacBook2,1, iMac7,1, iMac8,1, iMac late 2009, MacBook Pro mid-2011 - cannot boot to DOS on USB/keyboard not functional after forcing boot via Plop Boot Manager on CD (successfully used flashrom on EFI-booting Linux instead, or [NOT TESTED] enter the read/flash commands into AUTOEXEC.BAT to automatically run necessary commands without requiring keyboard inputs).
+5. Apple MacBook2,1, iMac7,1, iMac8,1, iMac late 2009, MacBook Pro mid-2011 - cannot boot to DOS on USB/keyboard not functional after forcing boot via Plop Boot Manager on CD (successfully used flashrom on EFI-booting Linux instead). [NOT TESTED]: Might work on DOS flashrom if you enter the read/flash commands into AUTOEXEC.BAT to automatically run necessary commands without requiring keyboard inputs.
+6. Acer Aspire XC-704G - read failed due to flash chip recognition issues (recommend to use AFUDOS/AFUEFI/AFUWIN/AFULNX AMI Aptio V flash utility instead).
+7. Dell Inspiron 15 3567, Dell Inspiron 17 7779 - read failed due to "transaction error" (recommend to use vendor flash utility instead).
+8. Dell Inspiron 15 5579 - read succeeded but write failed because it was unable to disable flash write protection (recommend to use vendor flash utility instead).
 
 Helpful references:
 
