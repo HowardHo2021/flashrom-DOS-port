@@ -14,3 +14,12 @@
 /util/ich_descriptors_tool/ich_descriptors_tool.exe
 /util/ich_descriptors_tool/.dep
 /util/ich_descriptors_tool/.obj
+
+/CWSDPMI/
+/cwsdpmi.doc
+/CWSDPMI.EXE
+/build-djgpp/
+/libgetopt/
+/libpci-libgetopt-364/
+/pciutils-3.6.4-DOS/
+/upx-3.96-i386_linux/
