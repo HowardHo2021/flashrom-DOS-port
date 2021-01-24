@@ -84,7 +84,7 @@ const struct dev_entry devs_ft2232spi[] = {
 #define BITMODE_BITBANG_NORMAL	1
 #define BITMODE_BITBANG_SPI	2
 
-/* The variables cs_bits and pindir store the values for the "set data bits low byte" MPSSE command that
+/* The variables pinlvl and pindir store the values for the "set data bits low byte" MPSSE command that
  * sets the initial state and the direction of the I/O pins. The pin offsets are as follows:
  * TCK/SK is bit 0.
  * TDI/DO is bit 1.
@@ -102,7 +102,7 @@ const struct dev_entry devs_ft2232spi[] = {
  *  value: 0x08  CS=high, DI=low, DO=low, SK=low
  *    dir: 0x0b  CS=output, DI=input, DO=output, SK=output
  */
-static uint8_t cs_bits = 0x08;
+static uint8_t pinlvl = 0x08;
 static uint8_t pindir = 0x0b;
 static struct ftdi_context ftdic_context;
 
@@ -156,6 +156,30 @@ static int get_buf(struct ftdi_context *ftdic, const unsigned char *buf,
 		buf += r;
 		size -= r;
 	}
+	return 0;
+}
+
+static int ft2232_shutdown(void *data)
+{
+	int f;
+	struct ftdi_context *ftdic = (struct ftdi_context *) data;
+	unsigned char buf[3];
+
+	msg_pdbg("Releasing I/Os\n");
+	buf[0] = SET_BITS_LOW;
+	buf[1] = 0; /* Output byte ignored */
+	buf[2] = 0; /* Pin direction: all inputs */
+	if (send_buf(ftdic, buf, 3)) {
+		msg_perr("Unable to set pins back inputs: (%s)\n",
+		         ftdi_get_error_string(ftdic));
+	}
+
+	if ((f = ftdi_usb_close(ftdic)) < 0) {
+		msg_perr("Unable to close FTDI device: %d (%s)\n", f,
+		         ftdi_get_error_string(ftdic));
+		return f;
+	}
+
 	return 0;
 }
 
@@ -222,7 +246,7 @@ int ft2232_spi_init(void)
 			/* JTAGkey(2) needs to enable its output via Bit4 / GPIOL0
 			*  value: 0x18  OE=high, CS=high, DI=low, DO=low, SK=low
 			*    dir: 0x1b  OE=output, CS=output, DI=input, DO=output, SK=output */
-			cs_bits = 0x18;
+			pinlvl = 0x18;
 			pindir = 0x1b;
 		} else if (!strcasecmp(arg, "picotap")) {
 			ft2232_vid = GOEPEL_VID;
@@ -240,7 +264,7 @@ int ft2232_spi_init(void)
 			/* In its default configuration it is a jtagkey clone */
 			ft2232_type = FTDI_FT2232H_PID;
 			channel_count = 2;
-			cs_bits = 0x18;
+			pinlvl = 0x18;
 			pindir = 0x1b;
 		} else if (!strcasecmp(arg, "openmoko")) {
 			ft2232_vid = FIC_VID;
@@ -253,7 +277,7 @@ int ft2232_spi_init(void)
 			/* arm-usb-ocd(-h) has an output buffer that needs to be enabled by pulling ADBUS4 low.
 			*  value: 0x08  #OE=low, CS=high, DI=low, DO=low, SK=low
 			*    dir: 0x1b  #OE=output, CS=output, DI=input, DO=output, SK=output */
-			cs_bits = 0x08;
+			pinlvl = 0x08;
 			pindir = 0x1b;
 		} else if (!strcasecmp(arg, "arm-usb-tiny")) {
 			ft2232_vid = OLIMEX_VID;
@@ -264,7 +288,7 @@ int ft2232_spi_init(void)
 			ft2232_type = OLIMEX_ARM_OCD_H_PID;
 			channel_count = 2;
 			/* See arm-usb-ocd */
-			cs_bits = 0x08;
+			pinlvl = 0x08;
 			pindir = 0x1b;
 		} else if (!strcasecmp(arg, "arm-usb-tiny-h")) {
 			ft2232_vid = OLIMEX_VID;
@@ -343,7 +367,7 @@ int ft2232_spi_init(void)
 	}
 	free(arg);
 
-	/* Allows setting multiple GPIOL states, for example: csgpiol=012 */
+	/* Allows setting multiple GPIOL pins to high, for example: csgpiol=012 */
 	arg = extract_programmer_param("csgpiol");
 	if (arg) {
 		unsigned int ngpios = strlen(arg);
@@ -357,9 +381,51 @@ int ft2232_spi_init(void)
 				return -2;
 			} else {
 				unsigned int pin = temp + 4;
-				cs_bits |= 1 << pin;
+				pinlvl |= 1 << pin;
 				pindir |= 1 << pin;
 			}
+		}
+	}
+	free(arg);
+
+	/* Allows setting GPIOL pins high, low or input (high-z) */
+	arg = extract_programmer_param("gpiol");
+	if (arg) {
+		int ok = 0;
+		if (strlen(arg) == 4) {
+			ok = 1;
+			for (int i = 0; i < 4; i++) {
+				unsigned int pin = i + 4;
+				switch (toupper(arg[i])) {
+					case 'H':
+						pinlvl |= 1 << pin;
+						pindir |= 1 << pin;
+						break;
+					case 'L':
+						pinlvl &= ~(1 << pin);
+						pindir |= 1 << pin;
+						break;
+					case 'Z':
+						pindir &= ~(1 << pin);
+						break;
+					case 'X':
+						break;
+					default:
+						ok = 0;
+				}
+			}
+		}
+		if (!ok) {
+			msg_perr("Error: Invalid GPIOLs specified: \"%s\".\n"
+				 "Valid values are 4 character strings of H, L, Z and X.\n"
+				 "    H - Set GPIOL output high\n"
+				 "    L - Set GPIOL output low\n"
+				 "    Z - Set GPIOL as input (high impedance)\n"
+				 "    X - Leave as programmer default\n"
+				 "Example: gpiol=LZXH drives GPIOL 0 low, and GPIOL 3 high, sets GPIOL 1\n"
+				 "to an input and leaves GPIOL 2 set according to the programmer type.\n", arg);
+			free(arg);
+			return -2;
 		}
 	}
 	free(arg);
@@ -446,13 +512,14 @@ int ft2232_spi_init(void)
 
 	msg_pdbg("Set data bits\n");
 	buf[0] = SET_BITS_LOW;
-	buf[1] = cs_bits;
+	buf[1] = pinlvl;
 	buf[2] = pindir;
 	if (send_buf(ftdic, buf, 3)) {
 		ret = -8;
 		goto ftdi_err;
 	}
 
+	register_shutdown(ft2232_shutdown, ftdic);
 	register_spi_master(&spi_master_ft2232);
 
 	return 0;
@@ -502,7 +569,7 @@ static int ft2232_spi_send_command(const struct flashctx *flash,
 	 */
 	msg_pspew("Assert CS#\n");
 	buf[i++] = SET_BITS_LOW;
-	buf[i++] = ~ 0x08 & cs_bits; /* assert CS (3rd) bit only */
+	buf[i++] = ~ 0x08 & pinlvl; /* assert CS (3rd) bit only */
 	buf[i++] = pindir;
 
 	if (writecnt) {
@@ -543,7 +610,7 @@ static int ft2232_spi_send_command(const struct flashctx *flash,
 
 	msg_pspew("De-assert CS#\n");
 	buf[i++] = SET_BITS_LOW;
-	buf[i++] = cs_bits;
+	buf[i++] = pinlvl;
 	buf[i++] = pindir;
 	ret = send_buf(ftdic, buf, i);
 	failed |= ret;
