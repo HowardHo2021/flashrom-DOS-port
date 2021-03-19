@@ -68,6 +68,7 @@ config_usbblaster_spi = get_option('config_usbblaster_spi')
 config_stlinkv3_spi = get_option('config_stlinkv3_spi')
 config_lspcon_i2c_spi = get_option('config_lspcon_i2c_spi')
 config_realtek_mst_i2c_spi = get_option('config_realtek_mst_i2c_spi')
+config_print_wiki= get_option('print_wiki')
 
 cargs = []
 deps = []
@@ -104,6 +105,7 @@ endif
 if get_option('pciutils')
   srcs += 'pcidev.c'
   deps += dependency('libpci')
+  need_raw_access = true
   cargs += '-DNEED_PCI=1'
 else
   config_atahpt = false
@@ -277,7 +279,6 @@ endif
 if config_rayer_spi
   srcs += 'rayer_spi.c'
   config_bitbang_spi = true
-  need_raw_access = true
   cargs += '-DCONFIG_RAYER_SPI=1'
 endif
 if config_satamv
@@ -377,7 +378,7 @@ srcs += 'writeprotect.c'
 
 mapfile = 'libflashrom.map'
 vflag = '-Wl,--version-script,@0@/@1@'.format(meson.current_source_dir(), mapfile)
-flashrom = shared_library(
+flashrom = library(
   'flashrom',
   sources : [
     srcs,
@@ -428,6 +429,11 @@ flashrom_dep = declare_dependency(
   include_directories : include_directories('.'),
   dependencies : deps
 )
+
+if config_print_wiki
+  srcs += 'print_wiki.c'
+  cargs += '-DCONFIG_PRINT_WIKI=1'
+endif
 
 # we can't just link_with libflashrom as we require all the internal symbols...
 executable(
