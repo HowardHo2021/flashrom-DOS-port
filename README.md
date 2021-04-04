@@ -17,8 +17,7 @@ It is not supported by the original creators of flashrom.
 Please report issues you encountered using this port of flashrom to DOS that
 you did not encounter using the original/official flashrom builds to:
 
-Email: howardho2021@berkeley.edu
-Website: http://ocf.berkeley.edu/~howardho/
+Email: howardho2021@gmail.com
 
 The official flashrom website is:
 
