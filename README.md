@@ -1,21 +1,16 @@
 flashrom for DOS README
 -----------------------
 
-NOTE: This repo is forked from the official flashrom repo located at:
-https://review.coreboot.org/cgit/flashrom.git with certain modifications
-to the code in order to cross-compile flashrom for the DOS platform via
-DJGPP GCC cross-compiler on Linux.
+NOTE: This repo is forked from the official flashrom repo located at https://review.coreboot.org/plugins/gitiles/flashrom/. I have made several modifications to the code in order to be able to cross-compile flashrom for the DOS platform via DJGPP GCC cross-compiler on Linux.
 
 *Please read "README_DOS" for steps on how to compile flashrom for DOS.*
 
 Contact
 -------
 
-This unofficial fork was created by Howard Ho ("HowardHo2021").
-It is not supported by the original creators of flashrom.
+This unofficial fork was created by Howard Ho ("HowardHo2021"). It is not supported by the original creators of flashrom.
 
-Please report issues you encountered using this port of flashrom to DOS that
-you did not encounter using the original/official flashrom builds to:
+Please report issues you encountered using this port of flashrom to DOS that you did not encounter using the original/official flashrom builds to:
 
 Email: howardho2021@gmail.com
 
@@ -36,7 +31,7 @@ Disclaimers
 
 DISCLAIMER OF WARRANTY
 
-YOU ACKNOWLEDGE AND AGREE THAT "flashrom for DOS port" (THE "SOFTWARE") IS PROVIDED "AS IS" BY HOWARD HO ("HowardHo2021") AND WITHOUT WARRANTY OF ANY KIND. ALL WARRANTIES, CONDITIONS, REPRESENTATIONS, INDEMNITIES AND GUARANTEES WITH RESPECT TO THE SOFTWARE, WHETHER EXPRESS OR IMPLIED, ARISING BY LAW, CUSTOM, PRIOR ORAL OR WRITTEN STATEMENTS BY HOWARD HO ("HowardHo2021") OR OTHERWISE (INCLUDING, BUT NOT LIMITED TO ANY WARRANTY OF MERCHANTABILITY, SATISFACTORY QUALITY, FITNESS FOR PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT) ARE HEREBY OVERRIDDEN, EXCLUDED AND DISCLAIMED.
+YOU ACKNOWLEDGE AND AGREE THAT "flashrom for DOS" (THE "SOFTWARE") IS PROVIDED "AS IS" BY HOWARD HO ("HowardHo2021") AND WITHOUT WARRANTY OF ANY KIND. ALL WARRANTIES, CONDITIONS, REPRESENTATIONS, INDEMNITIES AND GUARANTEES WITH RESPECT TO THE SOFTWARE, WHETHER EXPRESS OR IMPLIED, ARISING BY LAW, CUSTOM, PRIOR ORAL OR WRITTEN STATEMENTS BY HOWARD HO ("HowardHo2021") OR OTHERWISE (INCLUDING, BUT NOT LIMITED TO ANY WARRANTY OF MERCHANTABILITY, SATISFACTORY QUALITY, FITNESS FOR PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT) ARE HEREBY OVERRIDDEN, EXCLUDED AND DISCLAIMED.
 
 DISCLAIMER OF DAMAGES
 
