@@ -1,27 +1,28 @@
-Flashrom for DOS - Compilation Guide:
+flashrom for DOS port - README and Compilation Guide:
 
-By Howard Ho (howardho2021) - Last Updated: April 3, 2021
+By Howard Ho (howardho2021) - Last Updated: April 25, 2021
 
-You are welcome to use my pre-compiled flashrom binary compiled for DOS on Ubuntu Mate 20.04 LTS x86_64 available under Releases on GitHub. Alternatively, you can compile your own copy from the source code in this repository, which will require an Internet connection (if the prerequisites are not yet installed on your system), and is recommended only if the pre-compiled binary does not work on your system or you really want to compile it yourself. NOTE: I have only tested compilation on Linux (tested on Ubuntu Mate 20.04 LTS x86_64, RHEL 7.9 x86_64 with EPEL repository enabled, and Ubuntu 20.04 LTS x86_64).
+You are welcome to use my pre-compiled flashrom binary compiled for DOS using DJGPP GCC 10.2.0 on Ubuntu 20.04 LTS x86_64, available under Releases on GitHub in both non-UPX-compressed and UPX-compressed versions. Alternatively, you can compile your own copy from the source code in this repository, which will require an Internet connection (if the prerequisites are not yet installed on your system), and is recommended only if the pre-compiled binary does not work on your system or you really want to compile it yourself. NOTE: I have only tested compilation on Linux (tested on Ubuntu Mate 20.04 LTS x86_64, RHEL 7.9 x86_64 with EPEL repository enabled, and Ubuntu 20.04 LTS x86_64).
 
-NOTE: Several changes were made to the flashrom source code to get it to cross-compile to DOS (you may see the exact changes I made by checking the commit history). Keep these changes in mind if you decide to cross-compile to DOS from the original/unmodified flashrom source code.
+NOTE: Several changes were made to the flashrom source code to port it to DOS (you may see the exact changes I made by checking the commit history). Keep these changes in mind if you decide to cross-compile to DOS from the original/unmodified flashrom source code.
 
 Compilation steps if you want to compile flashrom for DOS yourself using the modified source code I have provided in this repository instead of using my pre-compiled binaries under Releases:
 
-0. Open a Terminal window. CD to this folder.
+0. Open a Terminal window. CD to this folder. Ensure you have administrator privileges for the machine you are running this on (i.e., you know the password for the superuser account needed for sudo).
 1. Unzip the necessary build libraries and files compressed in build_libs_files.tar.xz by running "tar -xvf build_libs_files.tar.xz".
-2. Install pre-requisite packages. Example for Ubuntu 20.04: "sudo apt update" then "sudo apt install bison flex curl gcc g++ make texinfo zlib1g-dev g++ unzip".
-3. Install additionally needed packages:
-    a. pciutils development package (pciutils-dev/libpci-dev/pciutils-devel, depending on OS/distribution)
-    b. zlib development package (zlib1g-dev/zlib-devel, depending on OS/distribution)
-    c. libftdi development package (libftdi-dev), optional support for various external FT2232SPI flashers
-    d. libusb development package (libusb-dev), optional support for various USB-based programmers
-    e. various build utilities like make, gcc etc. (build-essential or similar depending on OS/distribution)
-    f. git (if you checkout the source and build manually)
-4. CD to build-djgpp folder. Install DJGPP GCC DOS cross-compiler. For convenience, you may use the scripted installer already in the build-djgpp folder (install for the GCC version on your PC - check by running "gcc --version" first). Run "sudo ./build-djgpp.sh 9.3.0" for example. This will take quite some time to complete depending on internet and PC speed. CD back to the root folder (where this file is).
-5. CD to pciutils-3.6.4-DOS folder. Compile libpci by running "make ZLIB=no DNS=no HOST=i386-djgpp-djgpp CROSS_COMPILE=/usr/local/djgpp/bin/i586-pc-msdosdjgpp- PREFIX=/ DESTDIR=$PWD/../libpci-libgetopt-364/ STRIP="--strip-program=/usr/local/djgpp/bin/i586-pc-msdosdjgpp-strip -s" install install-lib -j $(nproc)" within the pciutils-3.6.4-DOS folder. CD back to the root folder (where this file is).
+2. Install pre-requisite packages:
+   Example for Ubuntu 20.04: "sudo apt update" then "sudo apt install bison flex curl gcc-10 g++ make texinfo unzip zlib1g-dev libpci-dev libftdi-dev libusb-dev libusb-1.0-0-dev build-essential git".
+    - bison, flex, curl, make, gcc, g++, texinfo, unzip packages (names may vary depending on OS/distribution)
+    - pciutils development package (libpci-dev/pciutils-dev/pciutils-devel, depending on OS/distribution)
+    - zlib development package (zlib1g-dev/zlib-devel, depending on OS/distribution)
+    - libftdi development package (libftdi-dev), optional support for various external FT2232SPI flashers
+    - libusb development package (libusb-1.0-0-dev/libusb-dev), optional support for various USB-based programmers
+    - various build utilities like make, gcc etc. (build-essential or similar depending on OS/distribution)
+    - git (should be installed already if you cloned this repository from GitHub)
+4. CD to build-djgpp folder. Install DJGPP GCC DOS cross-compiler. For convenience, you may use the scripted installer already in the build-djgpp folder (install for the GCC version on your PC - check by running "gcc --version" first). Run "sudo ./build-djgpp.sh 10.2.0" for example. This will take quite some time to complete depending on internet and PC speed. CD back to the root folder (where this file is).
+5. CD to pciutils-3.6.4-DOS folder. Compile libpci by running "make ZLIB=no DNS=no HOST=i386-djgpp-djgpp CROSS_COMPILE=/usr/local/djgpp/bin/i586-pc-msdosdjgpp- PREFIX=/ DESTDIR=$PWD/../libpci-libgetopt-364/ STRIP="--strip-program=/usr/local/djgpp/bin/i586-pc-msdosdjgpp-strip -s" install install-lib -j $(nproc)" within the pciutils-3.6.4-DOS folder. CD back to the root folder (where this file is). Note that a new folder, libpci-libgetopt-364, should have been created. If it does not exist, re-enter the pciutils-3.6.4-DOS folder and re-run the compile command in this step again (I encountered this once or twice on Ubuntu 20.04 LTS x86_64).
 6. CD to libgetopt folder. Compile libgetopt by running "make -j $(nproc)" within the libgetopt folder.
-7. Copy the libgetopt.a to ../libpci-libgetopt-364/lib and getopt.h to ../libpci-libgetopt-364/include folders. CD back to the root folder (where this file is).
+7. While still in the libgetopt folder, copy the libgetopt.a to ../libpci-libgetopt-364/lib and getopt.h to ../libpci-libgetopt-364/include folders. CD back to the root folder (where this file is).
 8. Ensure you are now in the root folder where this file is (and where the flashrom source files are). Compile flashrom by running "make CC=/usr/local/djgpp/bin/i586-pc-msdosdjgpp-gcc STRIP=/usr/local/djgpp/bin/i586-pc-msdosdjgpp-strip LIBS_BASE=$PWD/libpci-libgetopt-364/ strip CONFIG_ENABLE_LIBUSB1_PROGRAMMERS=no -j $(nproc)" within this folder.
 9. If compilation was successful, you will notice that flashrom.exe has been created in the current root folder.
 10. Copy CWSDPMI.EXE from the CWSDPMI folder and flashrom.exe to where you will use it (bootable DOS USB, floppy etc.). NOTE: You must include CWSDPMI.EXE along with flashrom.exe!
@@ -35,31 +36,41 @@ NOTE: If my flashrom for DOS port worked or did not work for you, please let me 
 My pre-compiled flashrom binary (Jan. 13, 2021 release version) was:
 
 Successfully tested on the following:
-1. Gigabyte X570 AORUS ELITE WIFI motherboard with F31q BIOS on both FreeDOS (created by Rufus) and MS-DOS (based on Windows 98 SE bootable disk files used into HPUSBFW) bootable USB environments. Tested both read and write functions with "internal" programmer.
-2. Lenovo Yoga 730 15-IWL - tested read function with "internal" programmer on MS-DOS (based on Windows 98 SE bootable disk files used into HPUSBFW) bootable USB environment.
-3. Supermicro PDSBM-LN2+ - tested read function with "internal" programmer on MS-DOS (based on Windows 98 SE bootable disk files used into HPUSBFW) bootable USB environment.
-4. Lenovo Yoga 730 13-IKB - tested read function with "internal" programmer on MS-DOS (based on Windows 98 SE bootable disk files used into HPUSBFW) bootable USB environment.
+
+1. Gigabyte X570 AORUS ELITE WIFI motherboard with F31q BIOS on both FreeDOS (created by Rufus) and MS-DOS (based on Windows 98 SE bootable disk files used in HPUSBFW) bootable USB environments. Tested both read and write functions with "internal" programmer.
+2. Lenovo Yoga 730 15-IWL - tested read function with "internal" programmer on MS-DOS (based on Windows 98 SE bootable disk files used in HPUSBFW) bootable USB environment.
+3. Supermicro PDSBM-LN2+ - tested read function with "internal" programmer on MS-DOS (based on Windows 98 SE bootable disk files used in HPUSBFW) bootable USB environment.
+4. Lenovo Yoga 730 13-IKB - tested read function with "internal" programmer on MS-DOS (based on Windows 98 SE bootable disk files used in HPUSBFW) bootable USB environment.
 5. MSI Z390-A PRO (MS-7B98) - tested read/write functions with "internal" programmer on FreeDOS (created by Rufus) bootable USB environment. Note: Tool not officially tested by flashrom team on Intel Z390 chipset. CMOS reset required after BIOS chip write otherwise no screen display/POST.
 
 Failed on the following:
 
 1. Lenovo ThinkPad X300 - read failed due to laptop EC recognition issues (recommend vendor flash utility instead).
 2. HP Chromebook "SNAPPY" via RW_LEGACY boot FW - read failed due to SPI flash recognition issues (recommend enabling Chrome OS developer mode and using installed flashrom within built-in "crosh" shell).
-3. IBM 4838-74E - tested only with MS-DOS (based on Windows 98 SE bootable disk files used into HPUSBFW) bootable USB environment currently (read caused hang).
+3. IBM 4838-74E - tested only with MS-DOS (based on Windows 98 SE bootable disk files used in HPUSBFW) bootable USB environment currently (read caused hang).
 4. Lenovo ThinkPad E14 Gen 2 and Microsoft Surface Laptop 2 - no legacy boot support (successfully used flashrom on EFI-booting Linux instead).
-5. Apple MacBook2,1, iMac7,1, iMac8,1, iMac late 2009, MacBook Pro mid-2011 - cannot boot to DOS on USB/keyboard not functional after forcing boot via Plop Boot Manager on CD (successfully used flashrom on EFI-booting Linux instead). [NOT TESTED]: Might work on DOS flashrom if you enter the read/flash commands into AUTOEXEC.BAT to automatically run necessary commands without requiring keyboard inputs.
+5. Apple MacBook2,1, iMac7,1, iMac8,1, iMac late 2009, MacBook Pro mid-2011 - cannot boot to DOS on USB/keyboard not functional after forcing boot via Plop Boot Manager on CD (successfully used flashrom on EFI-booting Linux instead). [NOT TESTED]: Might work if you enter the read/flash commands in AUTOEXEC.BAT to automatically run necessary commands without requiring keyboard inputs.
 6. Acer Aspire XC-704G - read failed due to flash chip recognition issues (recommend AFUDOS/AFUEFI/AFUWIN/AFULNX AMI Aptio V flash utility instead).
 7. Dell Inspiron 15 3567, Dell Inspiron 17 7779 - read failed due to "transaction error" (recommend vendor flash utility instead).
 8. Dell Inspiron 15 5579 - read succeeded but write failed because it was unable to disable flash write protection (recommend vendor flash utility instead).
 
+My pre-compiled flashrom binary (Feb. 7, 2021 release version) was:
+
+Successfully tested on the following:
+
+1. Gigabyte X570 AORUS ELITE WIFI motherboard with F32 and my own modified F32 BIOSes on both FreeDOS (created by Rufus) and MS-DOS (based on Windows 98 SE bootable disk files used in HPUSBFW) bootable USB environments. Tested both read and write functions with "internal" programmer.
+
 Helpful references:
 
-https://flashrom.org/DOS if you wish to clone source repos yourself. Note that compiling with pciutils 3.6.4 will NOT require the patch on that page. pciutils 3.7.0 and newer were NOT TESTED. Also, code will not compile until you make the changes I did to the code and compile without LIBUSB programmer support.
+HP USB Format Tool (HPUSBFW) to create a bootable DOS USB - download via FileHippo at https://bit.ly/HPUSBFW
+Alternative tool to create a bootable DOS USB - Rufus, download at https://rufus.ie
+Windows 98 SE MS-DOS Boot Disk (for creating bootable DOS USB using HPUSBFW or Rufus) - download via allbootdisks.com at https://bit.ly/Win98SEBootDisk
+https://flashrom.org/DOS if you wish to clone source repo yourself. Note that compiling with pciutils 3.6.4 will NOT require the patch on that page. pciutils 3.7.0 and newer were NOT TESTED and may not work. Also, code will not cross-compile to DOS until you make the changes I did to the code and compile without LIBUSB programmer support.
 https://www.kernel.org/pub/software/utils/pciutils/pciutils-3.6.4.tar.gz
 https://flashrom.org/images/3/3d/Libgetopt.tar.gz
 
-The Flashrom repository is hosted on coreboot.org and mirrored on Github. All current development happens on the master branch.
-Browse: https://review.coreboot.org/cgit/flashrom.git
+The official flashrom repository (on which this port to DOS is based) is hosted on coreboot.org and mirrored on GitHub. All current development happens on the master branch.
+Browse: https://review.coreboot.org/plugins/gitiles/flashrom/
 Clone: https://review.coreboot.org/flashrom.git
 Review: https://review.coreboot.org/#/q/project:flashrom+status:open
 Workflow: https://www.coreboot.org/Git
