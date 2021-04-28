@@ -17,21 +17,68 @@
 #include "tests.h"
 
 #include <stdio.h>
+#include <stdint.h>
 
 /* redefinitions/wrapping */
+#define LOG_ME printf("%s is called\n", __func__)
+
 void __wrap_physunmap(void *virt_addr, size_t len)
 {
-	fprintf(stderr, "%s\n", __func__);
+	LOG_ME;
 }
+
 void *__wrap_physmap(const char *descr, uintptr_t phys_addr, size_t len)
 {
-	fprintf(stderr, "%s\n", __func__);
+	LOG_ME;
+	return NULL;
+}
+
+void __wrap_sio_write(uint16_t port, uint8_t reg, uint8_t data)
+{
+	LOG_ME;
+}
+
+uint8_t __wrap_sio_read(uint16_t port, uint8_t reg)
+{
+	LOG_ME;
+	return (uint8_t)mock();
+}
+
+int __wrap_open(const char *pathname, int flags)
+{
+	LOG_ME;
+	return 2021;
+}
+
+int __wrap_open64(const char *pathname, int flags)
+{
+	LOG_ME;
+	return 2021;
+}
+
+int __wrap_ioctl(int fd, unsigned long int request, ...)
+{
+	LOG_ME;
+	return 2021;
+}
+
+FILE *__wrap_fopen(const char *pathname, const char *mode)
+{
+	LOG_ME;
+	return NULL;
+}
+
+FILE *__wrap_fopen64(const char *pathname, const char *mode)
+{
+	LOG_ME;
 	return NULL;
 }
 
 int main(void)
 {
 	int ret = 0;
+
+	cmocka_set_message_output(CM_OUTPUT_STDOUT);
 
 	const struct CMUnitTest helpers_tests[] = {
 		cmocka_unit_test(address_to_bits_test_success),
@@ -62,6 +109,12 @@ int main(void)
 		cmocka_unit_test(probe_spi_st95_test_success), /* spi95.c */
 	};
 	ret |= cmocka_run_group_tests_name("spi25.c tests", spi25_tests, NULL, NULL);
+
+	const struct CMUnitTest init_shutdown_tests[] = {
+		cmocka_unit_test(dummy_init_and_shutdown_test_success),
+		cmocka_unit_test(linux_spi_init_and_shutdown_test_success),
+	};
+	ret |= cmocka_run_group_tests_name("init_shutdown.c tests", init_shutdown_tests, NULL, NULL);
 
 	return ret;
 }

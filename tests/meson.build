@@ -18,12 +18,20 @@ srcs = [
   'helpers.c',
   'flashrom.c',
   'spi25.c',
+  'init_shutdown.c',
 ]
 
 mocks = [
   '-Wl,--wrap=physunmap',
   '-Wl,--wrap=physmap',
   '-Wl,--wrap=spi_send_command',
+  '-Wl,--wrap=sio_write',
+  '-Wl,--wrap=sio_read',
+  '-Wl,--wrap=open',
+  '-Wl,--wrap=open64',
+  '-Wl,--wrap=ioctl',
+  '-Wl,--wrap=fopen',
+  '-Wl,--wrap=fopen64',
   '-Wl,--gc-sections',
 ]
 
