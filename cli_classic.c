@@ -40,7 +40,7 @@ static void cli_classic_usage(const char *name)
 #endif
 	       "\n\t-p <programmername>[:<parameters>] [-c <chipname>]\n"
 	       "\t\t(--flash-name|--flash-size|\n"
-	       "\t\t [-E|(-r|-w|-v) <file>]\n"
+	       "\t\t [-E|-x|(-r|-w|-v) <file>]\n"
 	       "\t\t [(-l <layoutfile>|--ifd| --fmap|--fmap-file <file>) [-i <region>[:<file>]]...]\n"
 	       "\t\t [-n] [-N] [-f])]\n"
 	       "\t[-V[V[V]]] [-o <logfile>]\n\n", name);
@@ -58,12 +58,14 @@ static void cli_classic_usage(const char *name)
 	       " -f | --force                       force specific operations (see man page)\n"
 	       " -n | --noverify                    don't auto-verify\n"
 	       " -N | --noverify-all                verify included regions only (cf. -i)\n"
+	       " -x | --extract                     extract regions to files\n"
 	       " -l | --layout <layoutfile>         read ROM layout from <layoutfile>\n"
 	       "      --wp-disable                  disable write protection\n"
 	       "      --wp-enable                   enable write protection\n"
 	       "      --wp-list                     list write protect range\n"
 	       "      --wp-status                   show write protect status\n"
 	       "      --wp-range=<start>,<len>      set write protect range\n"
+	       "      --wp-region <region>          set write protect region\n"
 	       "      --flash-name                  read out the detected flash name\n"
 	       "      --flash-size                  read out the detected flash size\n"
 	       "      --fmap                        read ROM layout from fmap embedded in ROM\n"
@@ -167,7 +169,7 @@ int main(int argc, char *argv[])
 	int flash_name = 0, flash_size = 0;
 	int set_wp_enable = 0, set_wp_disable = 0, wp_status = 0;
 	int set_wp_range = 0, set_wp_region = 0, wp_list = 0;
-	int read_it = 0, write_it = 0, erase_it = 0, verify_it = 0;
+	int read_it = 0, extract_it = 0, write_it = 0, erase_it = 0, verify_it = 0;
 	int dont_verify_it = 0, dont_verify_all = 0, list_supported = 0, operation_specified = 0;
 	struct flashrom_layout *layout = NULL;
 	enum programmer prog = PROGRAMMER_INVALID;
@@ -188,7 +190,7 @@ int main(int argc, char *argv[])
 	int ret = 0;
 	unsigned int wp_start = 0, wp_len = 0;
 
-	static const char optstring[] = "r:Rw:v:nNVEfc:l:i:p:Lzho:";
+	static const char optstring[] = "r:Rw:v:nNVEfc:l:i:p:Lzho:x";
 	static const struct option long_options[] = {
 		{"read",		1, NULL, 'r'},
 		{"write",		1, NULL, 'w'},
@@ -196,6 +198,7 @@ int main(int argc, char *argv[])
 		{"verify",		1, NULL, 'v'},
 		{"noverify",		0, NULL, 'n'},
 		{"noverify-all",	0, NULL, 'N'},
+		{"extract",		0, NULL, 'x'},
 		{"chip",		1, NULL, 'c'},
 		{"verbose",		0, NULL, 'V'},
 		{"force",		0, NULL, 'f'},
@@ -234,6 +237,7 @@ int main(int argc, char *argv[])
 	char *pparam = NULL;
 	struct layout_include_args *include_args = NULL;
 	char *wp_mode_opt = NULL;
+	char *wp_region = NULL;
 
 	/*
 	 * Safety-guard against a user who has (mistakenly) closed
@@ -286,6 +290,10 @@ int main(int argc, char *argv[])
 			break;
 		case 'N':
 			dont_verify_all = 1;
+			break;
+		case 'x':
+			cli_classic_validate_singleop(&operation_specified);
+			extract_it = 1;
 			break;
 		case 'c':
 			chip_to_probe = strdup(optarg);
@@ -455,6 +463,10 @@ int main(int argc, char *argv[])
 				cli_classic_abort_usage("No log filename specified.\n");
 			}
 #endif /* STANDALONE */
+			break;
+		case OPTION_WP_SET_REGION:
+			set_wp_region = 1;
+			wp_region = strdup(optarg);
 			break;
 		default:
 			cli_classic_abort_usage(NULL);
@@ -658,7 +670,7 @@ int main(int argc, char *argv[])
 
 	if (!(read_it | write_it | verify_it | erase_it | flash_name | flash_size
 	      | set_wp_range | set_wp_region | set_wp_enable |
-	      set_wp_disable | wp_status | wp_list)) {
+	      set_wp_disable | wp_status | wp_list | extract_it)) {
 		msg_ginfo("No operations were specified.\n");
 		goto out_shutdown;
 	}
@@ -674,8 +686,9 @@ int main(int argc, char *argv[])
 		goto out_shutdown;
 	}
 
+	struct wp *wp = fill_flash->chip->wp;
 	if (set_wp_range || set_wp_region) {
-		if (!fill_flash->chip->wp || !fill_flash->chip->wp->set_range) {
+		if (!wp || !wp->set_range) {
 			msg_gerr("Error: write protect is not supported on this flash chip.\n");
 			ret = 1;
 			goto out_shutdown;
@@ -696,66 +709,6 @@ int main(int argc, char *argv[])
 	if (flash_size) {
 		printf("%d\n", fill_flash->chip->total_size * 1024);
 		goto out_shutdown;
-	}
-
-	if (wp_status) {
-		if (fill_flash->chip->wp && fill_flash->chip->wp->wp_status) {
-			ret |= fill_flash->chip->wp->wp_status(fill_flash);
-		} else {
-			msg_gerr("Error: write protect is not supported on this flash chip.\n");
-			ret = 1;
-		}
-		goto out_shutdown;
-	}
-
-	/* Note: set_wp_disable should be done before setting the range */
-	if (set_wp_disable) {
-		if (fill_flash->chip->wp && fill_flash->chip->wp->disable) {
-			ret |= fill_flash->chip->wp->disable(fill_flash);
-		} else {
-			msg_gerr("Error: write protect is not supported on this flash chip.\n");
-			ret = 1;
-			goto out_shutdown;
-		}
-	}
-
-	if (!ret && set_wp_enable) {
-		enum wp_mode wp_mode;
-
-		if (wp_mode_opt)
-			wp_mode = get_wp_mode(wp_mode_opt);
-		else
-			wp_mode = WP_MODE_HARDWARE;	/* default */
-
-		if (wp_mode == WP_MODE_UNKNOWN) {
-			msg_gerr("Error: Invalid WP mode: \"%s\"\n", wp_mode_opt);
-			ret = 1;
-			goto out_shutdown;
-		}
-
-		if (fill_flash->chip->wp && fill_flash->chip->wp->enable) {
-			ret |= fill_flash->chip->wp->enable(fill_flash, wp_mode);
-		} else {
-			msg_gerr("Error: write protect is not supported on this flash chip.\n");
-			ret = 1;
-			goto out_shutdown;
-		}
-	}
-
-	if (wp_list) {
-		msg_ginfo("Valid write protection ranges:\n");
-		if (fill_flash->chip->wp && fill_flash->chip->wp->list_ranges) {
-			ret |= fill_flash->chip->wp->list_ranges(fill_flash);
-		} else {
-			msg_gerr("Error: write protect is not supported on this flash chip.\n");
-			ret = 1;
-		}
-		goto out_shutdown;
-	}
-
-	/* Note: set_wp_range must happen before set_wp_enable */
-	if (set_wp_range) {
-		ret |= fill_flash->chip->wp->set_range(fill_flash, wp_start, wp_len);
 	}
 
 	if (layoutfile) {
@@ -797,8 +750,77 @@ int main(int argc, char *argv[])
 		ret = 1;
 		goto out_shutdown;
 	}
-
 	flashrom_layout_set(fill_flash, layout);
+
+	if (wp_status) {
+		if (wp && wp->wp_status) {
+			ret |= wp->wp_status(fill_flash);
+		} else {
+			msg_gerr("Error: write protect is not supported on this flash chip.\n");
+			ret = 1;
+		}
+		goto out_release;
+	}
+
+	/* Note: set_wp_disable should be done before setting the range */
+	if (set_wp_disable) {
+		if (wp && wp->disable) {
+			ret |= wp->disable(fill_flash);
+		} else {
+			msg_gerr("Error: write protect is not supported on this flash chip.\n");
+			ret = 1;
+			goto out_release;
+		}
+	}
+
+	/* Note: set_wp_range must happen before set_wp_enable */
+	if (set_wp_range) {
+		ret |= wp->set_range(fill_flash, wp_start, wp_len);
+	}
+
+	if (set_wp_region && wp_region) {
+		if (get_region_range(layout, wp_region, &wp_start, &wp_len)) {
+			ret = 1;
+			goto out_release;
+		}
+		ret |= wp->set_range(fill_flash, wp_start, wp_len);
+		free(wp_region);
+	}
+
+	if (!ret && set_wp_enable) {
+		enum wp_mode wp_mode;
+
+		if (wp_mode_opt)
+			wp_mode = get_wp_mode(wp_mode_opt);
+		else
+			wp_mode = WP_MODE_HARDWARE;	/* default */
+
+		if (wp_mode == WP_MODE_UNKNOWN) {
+			msg_gerr("Error: Invalid WP mode: \"%s\"\n", wp_mode_opt);
+			ret = 1;
+			goto out_release;
+		}
+
+		if (wp && wp->enable) {
+			ret |= wp->enable(fill_flash, wp_mode);
+		} else {
+			msg_gerr("Error: write protect is not supported on this flash chip.\n");
+			ret = 1;
+			goto out_release;
+		}
+	}
+
+	if (wp_list) {
+		msg_ginfo("Valid write protection ranges:\n");
+		if (wp && wp->list_ranges) {
+			ret |= wp->list_ranges(fill_flash);
+		} else {
+			msg_gerr("Error: write protect is not supported on this flash chip.\n");
+			ret = 1;
+		}
+		goto out_release;
+	}
+
 	flashrom_flag_set(fill_flash, FLASHROM_FLAG_FORCE, !!force);
 #if CONFIG_INTERNAL == 1
 	flashrom_flag_set(fill_flash, FLASHROM_FLAG_FORCE_BOARDMISMATCH, !!force_boardmismatch);
@@ -813,6 +835,8 @@ int main(int argc, char *argv[])
 	programmer_delay(100000);
 	if (read_it)
 		ret = do_read(fill_flash, filename);
+	else if (extract_it)
+		ret = do_extract(fill_flash);
 	else if (erase_it)
 		ret = do_erase(fill_flash);
 	else if (write_it)
@@ -820,8 +844,8 @@ int main(int argc, char *argv[])
 	else if (verify_it)
 		ret = do_verify(fill_flash, filename);
 
+out_release:
 	flashrom_layout_release(layout);
-
 out_shutdown:
 	programmer_shutdown();
 out:
