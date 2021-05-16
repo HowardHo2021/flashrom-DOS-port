@@ -3,7 +3,7 @@ flashrom for DOS README
 
 _IMPORTANT UPDATE: This project is no longer being actively maintained. This is because I may no longer have time to merge the latest updates to the official flashrom codebase and/or release builds of this flashrom port for DOS on a regular basis._
 
-*If anyone would like to keep updating this repository, please send me an email and we can discuss further. Thanks!*
+**If anyone would like to keep updating this repository, please send me an email and we can discuss further. Thanks!**
 
 NOTE: This repo is forked from the official flashrom repo located at https://review.coreboot.org/plugins/gitiles/flashrom/. I have made several modifications to the code in order to be able to cross-compile flashrom for the DOS platform via DJGPP GCC cross-compiler on Linux.
 
