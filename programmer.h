@@ -670,8 +670,9 @@ enum ich_chipset {
 	CHIPSET_100_SERIES_SUNRISE_POINT, /* also 6th/7th gen Core i/o (LP) variants */
 	CHIPSET_C620_SERIES_LEWISBURG,
 	CHIPSET_300_SERIES_CANNON_POINT,
-	CHIPSET_APOLLO_LAKE,
 	CHIPSET_400_SERIES_COMET_POINT,
+	CHIPSET_APOLLO_LAKE,
+	CHIPSET_GEMINI_LAKE,
 };
 
 /* ichspi.c */
@@ -724,7 +725,7 @@ struct opaque_master {
 	int (*erase) (struct flashctx *flash, unsigned int blockaddr, unsigned int blocklen);
 	void *data;
 };
-int register_opaque_master(const struct opaque_master *mst);
+int register_opaque_master(const struct opaque_master *mst, void *data);
 
 /* programmer.c */
 void *fallback_map(const char *descr, uintptr_t phys_addr, size_t len);
@@ -746,7 +747,7 @@ struct par_master {
 	void (*chip_readn) (const struct flashctx *flash, uint8_t *buf, const chipaddr addr, size_t len);
 	void *data;
 };
-int register_par_master(const struct par_master *mst, const enum chipbustype buses);
+int register_par_master(const struct par_master *mst, const enum chipbustype buses, void *data);
 struct registered_master {
 	enum chipbustype buses_supported;
 	struct {
