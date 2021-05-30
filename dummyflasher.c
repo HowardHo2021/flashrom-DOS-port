@@ -634,9 +634,8 @@ static int dummy_shutdown(void *data)
 			write_buf_to_file(emu_data->flashchip_contents,
 					  emu_data->emu_chip_size,
 					  emu_data->emu_persistent_image);
-			free(emu_data->emu_persistent_image);
-			emu_data->emu_persistent_image = NULL;
 		}
+		free(emu_data->emu_persistent_image);
 		free(emu_data->flashchip_contents);
 	}
 #endif
@@ -700,12 +699,13 @@ int dummy_init(void)
 	tmp = extract_programmer_param("spi_write_256_chunksize");
 	if (tmp) {
 		data->spi_write_256_chunksize = strtoul(tmp, &endptr, 0);
-		free(tmp);
 		if (*endptr != '\0' || data->spi_write_256_chunksize < 1) {
 			msg_perr("invalid spi_write_256_chunksize\n");
+			free(tmp);
 			return 1;
 		}
 	}
+	free(tmp);
 
 	tmp = extract_programmer_param("spi_blacklist");
 	if (tmp) {
@@ -831,7 +831,7 @@ int dummy_init(void)
 	if (tmp) {
 		size = strtol(tmp, NULL, 10);
 		if (size <= 0 || (size % 1024 != 0)) {
-			msg_perr("%s: Chip size is not a multipler of 1024: %s\n",
+			msg_perr("%s: Chip size is not a multiple of 1024: %s\n",
 					 __func__, tmp);
 			free(tmp);
 			return 1;
@@ -957,27 +957,28 @@ int dummy_init(void)
 	}
 	free(tmp);
 
-	data->flashchip_contents = malloc(data->emu_chip_size);
-	if (!data->flashchip_contents) {
-		msg_perr("Out of memory!\n");
-		return 1;
-	}
-
 #ifdef EMULATE_SPI_CHIP
 	status = extract_programmer_param("spi_status");
 	if (status) {
 		errno = 0;
 		data->emu_status = strtoul(status, &endptr, 0);
-		free(status);
 		if (errno != 0 || status == endptr) {
+			free(status);
 			msg_perr("Error: initial status register specified, "
 				 "but the value could not be converted.\n");
 			return 1;
 		}
+		free(status);
 		msg_pdbg("Initial status register is set to 0x%02x.\n",
 			 data->emu_status);
 	}
 #endif
+
+	data->flashchip_contents = malloc(data->emu_chip_size);
+	if (!data->flashchip_contents) {
+		msg_perr("Out of memory!\n");
+		return 1;
+	}
 
 	msg_pdbg("Filling fake flash chip with 0x%02x, size %i\n",
 			data->erase_to_zero ? 0x00 : 0xff, data->emu_chip_size);
@@ -1000,6 +1001,7 @@ int dummy_init(void)
 			if (read_buf_from_file(data->flashchip_contents, data->emu_chip_size,
 					   data->emu_persistent_image)) {
 				msg_perr("Unable to read %s\n", data->emu_persistent_image);
+				free(data->emu_persistent_image);
 				free(data->flashchip_contents);
 				return 1;
 			}
@@ -1011,6 +1013,7 @@ int dummy_init(void)
 
 dummy_init_out:
 	if (register_shutdown(dummy_shutdown, data)) {
+		free(data->emu_persistent_image);
 		free(data->flashchip_contents);
 		free(data);
 		return 1;
