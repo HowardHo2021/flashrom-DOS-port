@@ -1,6 +1,6 @@
 flashrom for DOS port - README and Compilation Guide:
 
-By Howard Ho (howardho2021) - Last Updated: April 25, 2021
+By Howard Ho (howardho2021) - Last Updated: May 31, 2021
 
 You are welcome to use my pre-compiled flashrom binary compiled for DOS using DJGPP GCC 10.2.0 on Ubuntu 20.04 LTS x86_64, available under Releases on GitHub in both non-UPX-compressed and UPX-compressed versions. Alternatively, you can compile your own copy from the source code in this repository, which will require an Internet connection (if the prerequisites are not yet installed on your system), and is recommended only if the pre-compiled binary does not work on your system or you really want to compile it yourself. NOTE: I have only tested compilation on Linux (tested on Ubuntu Mate 20.04 LTS x86_64, RHEL 7.9 x86_64 with EPEL repository enabled, and Ubuntu 20.04 LTS x86_64).
 
@@ -8,9 +8,9 @@ NOTE: Several changes were made to the flashrom source code to port it to DOS (y
 
 Compilation steps if you want to compile flashrom for DOS yourself using the modified source code I have provided in this repository instead of using my pre-compiled binaries under Releases:
 
-0. Open a Terminal window. CD to this folder. Ensure you have administrator privileges for the machine you are running this on (i.e., you know the password for the superuser account needed for sudo).
-1. Unzip the necessary build libraries and files compressed in build_libs_files.tar.xz by running "tar -xvf build_libs_files.tar.xz".
-2. Install pre-requisite packages:
+1. Open a Terminal window. CD to this folder. Ensure you have administrator privileges for the machine you are running this on (i.e., you know the password for the superuser account needed for sudo).
+2. Unzip the necessary build libraries and files compressed in build_libs_files.tar.xz by running "tar -xvf build_libs_files.tar.xz".
+3. Install pre-requisite packages:
    Example for Ubuntu 20.04: "sudo apt update" then "sudo apt install bison flex curl gcc-10 g++ make texinfo unzip zlib1g-dev libpci-dev libftdi-dev libusb-dev libusb-1.0-0-dev build-essential git".
     - bison, flex, curl, make, gcc, g++, texinfo, unzip packages (names may vary depending on OS/distribution)
     - pciutils development package (libpci-dev/pciutils-dev/pciutils-devel, depending on OS/distribution)
