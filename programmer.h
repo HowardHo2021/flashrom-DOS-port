@@ -182,15 +182,15 @@ int programmer_shutdown(void);
 
 struct bitbang_spi_master {
 	/* Note that CS# is active low, so val=0 means the chip is active. */
-	void (*set_cs) (int val);
-	void (*set_sck) (int val);
-	void (*set_mosi) (int val);
-	int (*get_miso) (void);
-	void (*request_bus) (void);
-	void (*release_bus) (void);
+	void (*set_cs) (int val, void *spi_data);
+	void (*set_sck) (int val, void *spi_data);
+	void (*set_mosi) (int val, void *spi_data);
+	int (*get_miso) (void *spi_data);
+	void (*request_bus) (void *spi_data);
+	void (*release_bus) (void *spi_data);
 	/* optional functions to optimize xfers */
-	void (*set_sck_set_mosi) (int sck, int mosi);
-	int (*set_sck_get_miso) (int sck);
+	void (*set_sck_set_mosi) (int sck, int mosi, void *spi_data);
+	int (*set_sck_get_miso) (int sck, void *spi_data);
 	/* Length of half a clock period in usecs. */
 	unsigned int half_period;
 };
@@ -542,7 +542,7 @@ int pony_spi_init(void);
 #endif
 
 /* bitbang_spi.c */
-int register_spi_bitbang_master(const struct bitbang_spi_master *master);
+int register_spi_bitbang_master(const struct bitbang_spi_master *master, void *spi_data);
 
 /* buspirate_spi.c */
 #if CONFIG_BUSPIRATE_SPI == 1
