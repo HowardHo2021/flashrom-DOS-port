@@ -119,12 +119,12 @@ const char *flashrom_version_info(void)
  */
 const char **flashrom_supported_programmers(void)
 {
-	enum programmer p = 0;
-	const char **supported_programmers = malloc((PROGRAMMER_INVALID + 1) * sizeof(char*));
+	size_t p = 0;
+	const char **supported_programmers = malloc((programmer_table_size + 1) * sizeof(char*));
 
 	if (supported_programmers != NULL) {
-		for (; p < PROGRAMMER_INVALID; ++p) {
-			supported_programmers[p] = programmer_table[p].name;
+		for (; p < programmer_table_size; ++p) {
+			supported_programmers[p] = programmer_table[p]->name;
 		}
 	} else {
 		msg_gerr("Memory allocation error!\n");
@@ -182,7 +182,7 @@ struct flashrom_board_info *flashrom_supported_boards(void)
 	++boards_known_size;
 
 	struct flashrom_board_info *supported_boards =
-		malloc(boards_known_size * sizeof(struct flashrom_board_info));
+		malloc(boards_known_size * sizeof(*supported_boards));
 
 	if (supported_boards != NULL) {
 		for (; i < boards_known_size; ++i) {
@@ -278,16 +278,16 @@ int flashrom_programmer_init(struct flashrom_programmer **const flashprog,
 {
 	unsigned prog;
 
-	for (prog = 0; prog < PROGRAMMER_INVALID; prog++) {
-		if (strcmp(prog_name, programmer_table[prog].name) == 0)
+	for (prog = 0; prog < programmer_table_size; prog++) {
+		if (strcmp(prog_name, programmer_table[prog]->name) == 0)
 			break;
 	}
-	if (prog >= PROGRAMMER_INVALID) {
+	if (prog >= programmer_table_size) {
 		msg_ginfo("Error: Unknown programmer \"%s\". Valid choices are:\n", prog_name);
 		list_programmers_linebreak(0, 80, 0);
 		return 1;
 	}
-	return programmer_init(prog, prog_param);
+	return programmer_init(programmer_table[prog], prog_param);
 }
 
 /**

@@ -349,7 +349,7 @@
 #include <unistd.h>
 
 /* FIXME: Add some programmer IDs here */
-const struct dev_entry devs_raiden[] = {
+static const struct dev_entry devs_raiden[] = {
 	{0},
 };
 
@@ -1454,7 +1454,7 @@ static void free_dev_list(struct usb_device **dev_lst)
 		dev = usb_device_free(dev);
 }
 
-int raiden_debug_spi_init(void)
+static int raiden_debug_spi_init(void)
 {
 	struct usb_match match;
 	char *serial = extract_programmer_param("serial");
@@ -1510,11 +1510,9 @@ int raiden_debug_spi_init(void)
 			found = 1;
 			goto loop_end;
 		} else {
-			unsigned char dev_serial[32];
+			unsigned char dev_serial[32] = { 0 };
 			struct libusb_device_descriptor descriptor;
 			int rc;
-
-			memset(dev_serial, 0, sizeof(dev_serial));
 
 			if (libusb_get_device_descriptor(device->device, &descriptor)) {
 				msg_pdbg("USB: Failed to get device descriptor.\n");
@@ -1579,19 +1577,19 @@ loop_end:
 		(request_enable == RAIDEN_DEBUG_SPI_REQ_ENABLE_EC))
 		usleep(50 * 1000);
 
-	struct spi_master *spi_config = calloc(1, sizeof(struct spi_master));
+	struct spi_master *spi_config = calloc(1, sizeof(*spi_config));
 	if (!spi_config) {
 		msg_perr("Unable to allocate space for SPI master.\n");
 		return SPI_GENERIC_ERROR;
 	}
-	struct raiden_debug_spi_data *data = calloc(1, sizeof(struct raiden_debug_spi_data));
+	struct raiden_debug_spi_data *data = calloc(1, sizeof(*data));
 	if (!data) {
 		free(spi_config);
 		msg_perr("Unable to allocate space for extra SPI master data.\n");
 		return SPI_GENERIC_ERROR;
 	}
 
-	memcpy(spi_config, &spi_master_raiden_debug, sizeof(struct spi_master));
+	*spi_config = spi_master_raiden_debug;
 
 	data->dev = device;
 	data->in_ep = in_endpoint;
@@ -1619,3 +1617,13 @@ loop_end:
 
 	return 0;
 }
+
+const struct programmer_entry programmer_raiden_debug_spi = {
+	.name			= "raiden_debug_spi",
+	.type			= USB,
+	.devs.dev		= devs_raiden,
+	.init			= raiden_debug_spi_init,
+	.map_flash_region	= fallback_map,
+	.unmap_flash_region	= fallback_unmap,
+	.delay			= internal_delay,
+};

@@ -24,127 +24,6 @@
 
 #include "flash.h"	/* for chipaddr and flashctx */
 
-enum programmer {
-#if CONFIG_INTERNAL == 1
-	PROGRAMMER_INTERNAL,
-#endif
-#if CONFIG_DUMMY == 1
-	PROGRAMMER_DUMMY,
-#endif
-#if CONFIG_MEC1308 == 1
-	PROGRAMMER_MEC1308,
-#endif
-#if CONFIG_NIC3COM == 1
-	PROGRAMMER_NIC3COM,
-#endif
-#if CONFIG_NICREALTEK == 1
-	PROGRAMMER_NICREALTEK,
-#endif
-#if CONFIG_NICNATSEMI == 1
-	PROGRAMMER_NICNATSEMI,
-#endif
-#if CONFIG_GFXNVIDIA == 1
-	PROGRAMMER_GFXNVIDIA,
-#endif
-#if CONFIG_RAIDEN_DEBUG_SPI == 1
-	PROGRAMMER_RAIDEN_DEBUG_SPI,
-#endif
-#if CONFIG_DRKAISER == 1
-	PROGRAMMER_DRKAISER,
-#endif
-#if CONFIG_SATASII == 1
-	PROGRAMMER_SATASII,
-#endif
-#if CONFIG_ATAHPT == 1
-	PROGRAMMER_ATAHPT,
-#endif
-#if CONFIG_ATAVIA == 1
-	PROGRAMMER_ATAVIA,
-#endif
-#if CONFIG_ATAPROMISE == 1
-	PROGRAMMER_ATAPROMISE,
-#endif
-#if CONFIG_IT8212 == 1
-	PROGRAMMER_IT8212,
-#endif
-#if CONFIG_FT2232_SPI == 1
-	PROGRAMMER_FT2232_SPI,
-#endif
-#if CONFIG_SERPROG == 1
-	PROGRAMMER_SERPROG,
-#endif
-#if CONFIG_BUSPIRATE_SPI == 1
-	PROGRAMMER_BUSPIRATE_SPI,
-#endif
-#if CONFIG_DEDIPROG == 1
-	PROGRAMMER_DEDIPROG,
-#endif
-#if CONFIG_DEVELOPERBOX_SPI == 1
-	PROGRAMMER_DEVELOPERBOX_SPI,
-#endif
-#if CONFIG_ENE_LPC == 1
-	PROGRAMMER_ENE_LPC,
-#endif
-#if CONFIG_RAYER_SPI == 1
-	PROGRAMMER_RAYER_SPI,
-#endif
-#if CONFIG_PONY_SPI == 1
-	PROGRAMMER_PONY_SPI,
-#endif
-#if CONFIG_NICINTEL == 1
-	PROGRAMMER_NICINTEL,
-#endif
-#if CONFIG_NICINTEL_SPI == 1
-	PROGRAMMER_NICINTEL_SPI,
-#endif
-#if CONFIG_NICINTEL_EEPROM == 1
-	PROGRAMMER_NICINTEL_EEPROM,
-#endif
-#if CONFIG_OGP_SPI == 1
-	PROGRAMMER_OGP_SPI,
-#endif
-#if CONFIG_SATAMV == 1
-	PROGRAMMER_SATAMV,
-#endif
-#if CONFIG_LINUX_MTD == 1
-	PROGRAMMER_LINUX_MTD,
-#endif
-#if CONFIG_LINUX_SPI == 1
-	PROGRAMMER_LINUX_SPI,
-#endif
-#if CONFIG_USBBLASTER_SPI == 1
-	PROGRAMMER_USBBLASTER_SPI,
-#endif
-#if CONFIG_MSTARDDC_SPI == 1
-	PROGRAMMER_MSTARDDC_SPI,
-#endif
-#if CONFIG_PICKIT2_SPI == 1
-	PROGRAMMER_PICKIT2_SPI,
-#endif
-#if CONFIG_CH341A_SPI == 1
-	PROGRAMMER_CH341A_SPI,
-#endif
-#if CONFIG_DIGILENT_SPI == 1
-	PROGRAMMER_DIGILENT_SPI,
-#endif
-#if CONFIG_JLINK_SPI == 1
-	PROGRAMMER_JLINK_SPI,
-#endif
-#if CONFIG_NI845X_SPI == 1
-	PROGRAMMER_NI845X_SPI,
-#endif
-#if CONFIG_STLINKV3_SPI == 1
-	PROGRAMMER_STLINKV3_SPI,
-#endif
-#if CONFIG_LSPCON_I2C_SPI == 1
-	PROGRAMMER_LSPCON_I2C_SPI,
-#endif
-#if CONFIG_REALTEK_MST_I2C_SPI == 1
-	PROGRAMMER_REALTEK_MST_I2C_SPI,
-#endif
-	PROGRAMMER_INVALID /* This must always be the last entry. */
-};
-
 enum programmer_type {
 	PCI = 1, /* to detect uninitialized values */
 	USB,
@@ -175,9 +54,51 @@ struct programmer_entry {
 	void (*delay) (unsigned int usecs);
 };
 
-extern const struct programmer_entry programmer_table[];
+extern const struct programmer_entry *const programmer_table[];
+extern const size_t programmer_table_size;
 
-int programmer_init(enum programmer prog, const char *param);
+/* programmer drivers */
+extern const struct programmer_entry programmer_internal;
+extern const struct programmer_entry programmer_dummy;
+extern const struct programmer_entry programmer_nic3com;
+extern const struct programmer_entry programmer_gfxnvidia;
+extern const struct programmer_entry programmer_raiden_debug_spi;
+extern const struct programmer_entry programmer_drkaiser;
+extern const struct programmer_entry programmer_nicrealtek;
+extern const struct programmer_entry programmer_nicnatsemi;
+extern const struct programmer_entry programmer_nicintel;
+extern const struct programmer_entry programmer_nicintel_spi;
+extern const struct programmer_entry programmer_nicintel_eeprom;
+extern const struct programmer_entry programmer_ogp_spi;
+extern const struct programmer_entry programmer_satamv;
+extern const struct programmer_entry programmer_satasii;
+extern const struct programmer_entry programmer_atahpt;
+extern const struct programmer_entry programmer_atavia;
+extern const struct programmer_entry programmer_atapromise;
+extern const struct programmer_entry programmer_it8212;
+extern const struct programmer_entry programmer_ft2232_spi;
+extern const struct programmer_entry programmer_usbblaster_spi;
+extern const struct programmer_entry programmer_mstarddc_spi;
+extern const struct programmer_entry programmer_pickit2_spi;
+extern const struct programmer_entry programmer_stlinkv3_spi;
+extern const struct programmer_entry programmer_rayer_spi;
+extern const struct programmer_entry programmer_pony_spi;
+extern const struct programmer_entry programmer_buspirate_spi;
+extern const struct programmer_entry programmer_linux_mtd;
+extern const struct programmer_entry programmer_linux_spi;
+extern const struct programmer_entry programmer_dediprog;
+extern const struct programmer_entry programmer_developerbox;
+extern const struct programmer_entry programmer_ch341a_spi;
+extern const struct programmer_entry programmer_digilent_spi;
+extern const struct programmer_entry programmer_ene_lpc;
+extern const struct programmer_entry programmer_jlink_spi;
+extern const struct programmer_entry programmer_ni845x_spi;
+extern const struct programmer_entry programmer_mec1308;
+extern const struct programmer_entry programmer_serprog;
+extern const struct programmer_entry programmer_lspcon_i2c_spi;
+extern const struct programmer_entry programmer_realtek_mst_i2c_spi;
+
+int programmer_init(const struct programmer_entry *prog, const char *param);
 int programmer_shutdown(void);
 
 struct bitbang_spi_master {
@@ -361,7 +282,6 @@ extern int force_boardmismatch;
 void probe_superio(void);
 int register_superio(struct superio s);
 extern enum chipbustype internal_buses_supported;
-int internal_init(void);
 #endif
 
 /* hwaccess.c */
@@ -397,207 +317,9 @@ void rmmio_valb(void *addr);
 void rmmio_valw(void *addr);
 void rmmio_vall(void *addr);
 
-/* dummyflasher.c */
-#if CONFIG_DUMMY == 1
-int dummy_init(void);
-void *dummy_map(const char *descr, uintptr_t phys_addr, size_t len);
-void dummy_unmap(void *virt_addr, size_t len);
-#endif
-
-/* nic3com.c */
-#if CONFIG_NIC3COM == 1
-int nic3com_init(void);
-extern const struct dev_entry nics_3com[];
-#endif
-
-/* gfxnvidia.c */
-#if CONFIG_GFXNVIDIA == 1
-int gfxnvidia_init(void);
-extern const struct dev_entry gfx_nvidia[];
-#endif
-
-/* raiden_debug_spi.c */
-#if CONFIG_RAIDEN_DEBUG_SPI == 1
-int raiden_debug_spi_init(void);
-extern const struct dev_entry devs_raiden[];
-#endif
-
-/* drkaiser.c */
-#if CONFIG_DRKAISER == 1
-int drkaiser_init(void);
-extern const struct dev_entry drkaiser_pcidev[];
-#endif
-
-/* nicrealtek.c */
-#if CONFIG_NICREALTEK == 1
-int nicrealtek_init(void);
-extern const struct dev_entry nics_realtek[];
-#endif
-
-/* nicnatsemi.c */
-#if CONFIG_NICNATSEMI == 1
-int nicnatsemi_init(void);
-extern const struct dev_entry nics_natsemi[];
-#endif
-
-/* nicintel.c */
-#if CONFIG_NICINTEL == 1
-int nicintel_init(void);
-extern const struct dev_entry nics_intel[];
-#endif
-
-/* nicintel_spi.c */
-#if CONFIG_NICINTEL_SPI == 1
-int nicintel_spi_init(void);
-extern const struct dev_entry nics_intel_spi[];
-#endif
-
-/* nicintel_eeprom.c */
-#if CONFIG_NICINTEL_EEPROM == 1
-int nicintel_ee_init(void);
-extern const struct dev_entry nics_intel_ee[];
-#endif
-
-/* ogp_spi.c */
-#if CONFIG_OGP_SPI == 1
-int ogp_spi_init(void);
-extern const struct dev_entry ogp_spi[];
-#endif
-
-/* satamv.c */
-#if CONFIG_SATAMV == 1
-int satamv_init(void);
-extern const struct dev_entry satas_mv[];
-#endif
-
-/* satasii.c */
-#if CONFIG_SATASII == 1
-int satasii_init(void);
-extern const struct dev_entry satas_sii[];
-#endif
-
-/* atahpt.c */
-#if CONFIG_ATAHPT == 1
-int atahpt_init(void);
-extern const struct dev_entry ata_hpt[];
-#endif
-
-/* atavia.c */
-#if CONFIG_ATAVIA == 1
-int atavia_init(void);
-void *atavia_map(const char *descr, uintptr_t phys_addr, size_t len);
-extern const struct dev_entry ata_via[];
-#endif
-
-/* atapromise.c */
-#if CONFIG_ATAPROMISE == 1
-int atapromise_init(void);
-void *atapromise_map(const char *descr, uintptr_t phys_addr, size_t len);
-extern const struct dev_entry ata_promise[];
-#endif
-
-/* it8212.c */
-#if CONFIG_IT8212 == 1
-int it8212_init(void);
-extern const struct dev_entry devs_it8212[];
-#endif
-
-/* ft2232_spi.c */
-#if CONFIG_FT2232_SPI == 1
-int ft2232_spi_init(void);
-extern const struct dev_entry devs_ft2232spi[];
-#endif
-
-/* usbblaster_spi.c */
-#if CONFIG_USBBLASTER_SPI == 1
-int usbblaster_spi_init(void);
-extern const struct dev_entry devs_usbblasterspi[];
-#endif
-
-/* mstarddc_spi.c */
-#if CONFIG_MSTARDDC_SPI == 1
-int mstarddc_spi_init(void);
-#endif
-
-/* pickit2_spi.c */
-#if CONFIG_PICKIT2_SPI == 1
-int pickit2_spi_init(void);
-extern const struct dev_entry devs_pickit2_spi[];
-#endif
-
-/* stlinkv3_spi.c */
-#if CONFIG_STLINKV3_SPI == 1
-int stlinkv3_spi_init(void);
-extern const struct dev_entry devs_stlinkv3_spi[];
-#endif
-
-/* rayer_spi.c */
-#if CONFIG_RAYER_SPI == 1
-int rayer_spi_init(void);
-#endif
-
-/* pony_spi.c */
-#if CONFIG_PONY_SPI == 1
-int pony_spi_init(void);
-#endif
-
 /* bitbang_spi.c */
 int register_spi_bitbang_master(const struct bitbang_spi_master *master, void *spi_data);
 
-/* buspirate_spi.c */
-#if CONFIG_BUSPIRATE_SPI == 1
-int buspirate_spi_init(void);
-#endif
-
-/* linux_mtd.c */
-#if CONFIG_LINUX_MTD == 1
-int linux_mtd_init(void);
-#endif
-
-/* linux_spi.c */
-#if CONFIG_LINUX_SPI == 1
-int linux_spi_init(void);
-#endif
-
-/* dediprog.c */
-#if CONFIG_DEDIPROG == 1
-int dediprog_init(void);
-extern const struct dev_entry devs_dediprog[];
-#endif
-
-/* developerbox_spi.c */
-#if CONFIG_DEVELOPERBOX_SPI == 1
-int developerbox_spi_init(void);
-extern const struct dev_entry devs_developerbox_spi[];
-#endif
-
-/* ch341a_spi.c */
-#if CONFIG_CH341A_SPI == 1
-int ch341a_spi_init(void);
-void ch341a_spi_delay(unsigned int usecs);
-extern const struct dev_entry devs_ch341a_spi[];
-#endif
-
-/* digilent_spi.c */
-#if CONFIG_DIGILENT_SPI == 1
-int digilent_spi_init(void);
-extern const struct dev_entry devs_digilent_spi[];
-#endif
-
-/* ene_lpc.c */
-#if CONFIG_ENE_LPC == 1
-int ene_lpc_init(void);
-#endif
-
-/* jlink_spi.c */
-#if CONFIG_JLINK_SPI == 1
-int jlink_spi_init(void);
-#endif
-
-/* ni845x_spi.c */
-#if CONFIG_NI845X_SPI == 1
-int ni845x_spi_init(void);
-#endif
 
 /* flashrom.c */
 struct decode_sizes {
@@ -694,7 +416,7 @@ int init_superio_ite(void);
 
 #if CONFIG_LINUX_MTD == 1
 /* trivial wrapper to avoid cluttering internal_init() with #if */
-static inline int try_mtd(void) { return linux_mtd_init(); };
+static inline int try_mtd(void) { return programmer_linux_mtd.init(); };
 #else
 static inline int try_mtd(void) { return 1; };
 #endif
@@ -702,10 +424,7 @@ static inline int try_mtd(void) { return 1; };
 /* mcp6x_spi.c */
 int mcp6x_spi_init(int want_spi);
 
-/* mec1308.c */
-#if CONFIG_MEC1308 == 1
-int mec1308_init(void);
-#endif
+
 
 /* sb600spi.c */
 int sb600_probe_spi(struct pci_dev *dev);
@@ -760,12 +479,7 @@ extern struct registered_master registered_masters[];
 extern int registered_master_count;
 int register_master(const struct registered_master *mst);
 
-/* serprog.c */
-#if CONFIG_SERPROG == 1
-int serprog_init(void);
-void serprog_delay(unsigned int usecs);
-void *serprog_map(const char *descr, uintptr_t phys_addr, size_t len);
-#endif
+
 
 /* serial.c */
 #if IS_WINDOWS
@@ -833,14 +547,5 @@ struct libusb_device_handle *usb_dev_get_by_vid_pid_serial(
 struct libusb_device_handle *usb_dev_get_by_vid_pid_number(
 		struct libusb_context *usb_ctx, uint16_t vid, uint16_t pid, unsigned int num);
 
-/* lspcon_i2c_spi.c */
-#if CONFIG_LSPCON_I2C_SPI == 1
-int lspcon_i2c_spi_init(void);
-#endif
-
-/* realtek_mst_i2c_spi.c */
-#if CONFIG_REALTEK_MST_I2C_SPI == 1
-int realtek_mst_i2c_spi_init(void);
-#endif
 
 #endif				/* !__PROGRAMMER_H__ */

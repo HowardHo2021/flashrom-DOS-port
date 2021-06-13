@@ -181,7 +181,7 @@ static int jlink_spi_shutdown(void *data)
 	return 0;
 }
 
-int jlink_spi_init(void)
+static int jlink_spi_init(void)
 {
 	char *arg;
 	unsigned long speed = 0;
@@ -358,9 +358,8 @@ int jlink_spi_init(void)
 		goto init_err;
 	}
 
-	uint8_t caps[JAYLINK_DEV_EXT_CAPS_SIZE];
+	uint8_t caps[JAYLINK_DEV_EXT_CAPS_SIZE] = { 0 };
 
-	memset(caps, 0, sizeof(caps));
 	ret = jaylink_get_caps(jaylink_devh, caps);
 
 	if (ret != JAYLINK_OK) {
@@ -487,3 +486,13 @@ init_err:
 
 	return 1;
 }
+
+const struct programmer_entry programmer_jlink_spi = {
+	.name			= "jlink_spi",
+	.type			= OTHER,
+	.init			= jlink_spi_init,
+	.devs.note		= "SEGGER J-Link and compatible devices\n",
+	.map_flash_region	= fallback_map,
+	.unmap_flash_region	= fallback_unmap,
+	.delay			= internal_delay,
+};

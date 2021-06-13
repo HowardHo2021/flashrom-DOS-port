@@ -45,7 +45,7 @@
 #define ALTERA_VID		0x09fb
 #define ALTERA_USBBLASTER_PID	0x6001
 
-const struct dev_entry devs_usbblasterspi[] = {
+static const struct dev_entry devs_usbblasterspi[] = {
 	{ALTERA_VID, ALTERA_USBBLASTER_PID, OK, "Altera", "USB-Blaster"},
 
 	{0}
@@ -74,9 +74,8 @@ static uint8_t reverse(uint8_t b)
 
 static int send_write(unsigned int writecnt, const unsigned char *writearr, struct ftdi_context ftdic)
 {
-	uint8_t buf[BUF_SIZE];
+	uint8_t buf[BUF_SIZE] = { 0 };
 
-	memset(buf, 0, sizeof(buf));
 	while (writecnt) {
 		unsigned int i;
 		unsigned int n_write = min(writecnt, BUF_SIZE - 1);
@@ -101,8 +100,7 @@ static int send_read(unsigned int readcnt, unsigned char *readarr, struct ftdi_c
 {
 	int i;
 	unsigned int n_read;
-	uint8_t buf[BUF_SIZE];
-	memset(buf, 0, sizeof(buf));
+	uint8_t buf[BUF_SIZE] = { 0 };
 
 	n_read = readcnt;
 	while (n_read) {
@@ -179,9 +177,9 @@ static const struct spi_master spi_master_usbblaster = {
 };
 
 /* Returns 0 upon success, a negative number upon errors. */
-int usbblaster_spi_init(void)
+static int usbblaster_spi_init(void)
 {
-	uint8_t buf[BUF_SIZE + 1];
+	uint8_t buf[BUF_SIZE + 1] = { 0 };
 	struct ftdi_context ftdic;
 	struct usbblaster_spi_data *usbblaster_data;
 
@@ -209,7 +207,6 @@ int usbblaster_spi_init(void)
 		return -1;
 	}
 
-	memset(buf, 0, sizeof(buf));
 	buf[sizeof(buf)-1] = BIT_LED | BIT_CS;
 	if (ftdi_write_data(&ftdic, buf, sizeof(buf)) < 0) {
 		msg_perr("USB-Blaster reset write failed\n");
@@ -234,5 +231,15 @@ int usbblaster_spi_init(void)
 	register_spi_master(&spi_master_usbblaster, usbblaster_data);
 	return 0;
 }
+
+const struct programmer_entry programmer_usbblaster_spi = {
+	.name			= "usbblaster_spi",
+	.type			= USB,
+	.devs.dev		= devs_usbblasterspi,
+	.init			= usbblaster_spi_init,
+	.map_flash_region	= fallback_map,
+	.unmap_flash_region	= fallback_unmap,
+	.delay			= internal_delay,
+};
 
 #endif

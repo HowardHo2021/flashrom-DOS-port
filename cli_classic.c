@@ -172,7 +172,7 @@ int main(int argc, char *argv[])
 	int read_it = 0, extract_it = 0, write_it = 0, erase_it = 0, verify_it = 0;
 	int dont_verify_it = 0, dont_verify_all = 0, list_supported = 0, operation_specified = 0;
 	struct flashrom_layout *layout = NULL;
-	enum programmer prog = PROGRAMMER_INVALID;
+	static const struct programmer_entry *prog = NULL;
 	enum {
 		OPTION_IFD = 0x0100,
 		OPTION_FMAP,
@@ -399,15 +399,16 @@ int main(int argc, char *argv[])
 #endif
 			break;
 		case 'p':
-			if (prog != PROGRAMMER_INVALID) {
+			if (prog != NULL) {
 				cli_classic_abort_usage("Error: --programmer specified "
 					"more than once. You can separate "
 					"multiple\nparameters for a programmer "
 					"with \",\". Please see the man page "
 					"for details.\n");
 			}
-			for (prog = 0; prog < PROGRAMMER_INVALID; prog++) {
-				name = programmer_table[prog].name;
+			size_t p;
+			for (p = 0; p < programmer_table_size; p++) {
+				name = programmer_table[p]->name;
 				namelen = strlen(name);
 				if (strncmp(optarg, name, namelen) == 0) {
 					switch (optarg[namelen]) {
@@ -417,8 +418,10 @@ int main(int argc, char *argv[])
 							free(pparam);
 							pparam = NULL;
 						}
+						prog = programmer_table[p];
 						break;
 					case '\0':
+						prog = programmer_table[p];
 						break;
 					default:
 						/* The continue refers to the
@@ -431,7 +434,7 @@ int main(int argc, char *argv[])
 					break;
 				}
 			}
-			if (prog == PROGRAMMER_INVALID) {
+			if (prog == NULL) {
 				fprintf(stderr, "Error: Unknown programmer \"%s\". Valid choices are:\n",
 					optarg);
 				list_programmers_linebreak(0, 80, 0);
@@ -539,13 +542,15 @@ int main(int argc, char *argv[])
 		/* Keep chip around for later usage in case a forced read is requested. */
 	}
 
-	if (prog == PROGRAMMER_INVALID) {
-		if (CONFIG_DEFAULT_PROGRAMMER != PROGRAMMER_INVALID) {
-			prog = CONFIG_DEFAULT_PROGRAMMER;
+	if (prog == NULL) {
+		const struct programmer_entry *const default_programmer = CONFIG_DEFAULT_PROGRAMMER_NAME;
+
+		if (default_programmer) {
+			prog = default_programmer;
 			/* We need to strdup here because we free(pparam) unconditionally later. */
 			pparam = strdup(CONFIG_DEFAULT_PROGRAMMER_ARGS);
 			msg_pinfo("Using default programmer \"%s\" with arguments \"%s\".\n",
-				  programmer_table[CONFIG_DEFAULT_PROGRAMMER].name, pparam);
+				  default_programmer->name, pparam);
 		} else {
 			msg_perr("Please select a programmer with the --programmer parameter.\n"
 #if CONFIG_INTERNAL == 1
