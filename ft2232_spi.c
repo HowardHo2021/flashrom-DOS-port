@@ -79,13 +79,22 @@ static const struct dev_entry devs_ft2232spi[] = {
 	{0},
 };
 
+#define FTDI_HW_BUFFER_SIZE 4096 /* in bytes */
+
 #define DEFAULT_DIVISOR 2
 
 #define BITMODE_BITBANG_NORMAL	1
 #define BITMODE_BITBANG_SPI	2
 
-/* The variables pinlvl and pindir store the values for the "set data bits low byte" MPSSE command that
- * sets the initial state and the direction of the I/O pins. The pin offsets are as follows:
+/*
+ * The variables `cs_bits` and `pindir` store the values for the
+ * "set data bits low byte" MPSSE command that sets the initial
+ * state and the direction of the I/O pins. `cs_bits` pins default
+ * to high and will be toggled during SPI transactions. All other
+ * output pins will be kept low all the time. On exit, all pins
+ * will be reconfigured as inputs.
+ *
+ * The pin offsets are as follows:
  * TCK/SK is bit 0.
  * TDI/DO is bit 1.
  * TDO/DI is bit 2.
@@ -95,15 +104,13 @@ static const struct dev_entry devs_ft2232spi[] = {
  * GPIOL2 is bit 6.
  * GPIOL3 is bit 7.
  *
- * The pin signal direction bit offsets follow the same order; 0 means that
- * pin at the matching bit index is an input, 1 means pin is an output.
- *
- * The default values (set below in ft2232_spi_init) are used for most devices:
- *  value: 0x08  CS=high, DI=low, DO=low, SK=low
+ * The default values (set below in ft2232_spi_init) are used for
+ * most devices:
+ *  value: 0x08  CS=high,   DI=low,   DO=low,    SK=low
  *    dir: 0x0b  CS=output, DI=input, DO=output, SK=output
  */
 struct ft2232_data {
-	uint8_t pinlvl;
+	uint8_t cs_bits;
 	uint8_t pindir;
 	struct ftdi_context ftdic_context;
 };
@@ -163,125 +170,124 @@ static int get_buf(struct ftdi_context *ftdic, const unsigned char *buf,
 
 static int ft2232_shutdown(void *data)
 {
-	int f;
 	struct ft2232_data *spi_data = (struct ft2232_data *) data;
 	struct ftdi_context *ftdic = &spi_data->ftdic_context;
 	unsigned char buf[3];
+	int ret = 0;
 
 	msg_pdbg("Releasing I/Os\n");
 	buf[0] = SET_BITS_LOW;
 	buf[1] = 0; /* Output byte ignored */
 	buf[2] = 0; /* Pin direction: all inputs */
 	if (send_buf(ftdic, buf, 3)) {
-		msg_perr("Unable to set pins back inputs: (%s)\n",
-		         ftdi_get_error_string(ftdic));
+		msg_perr("Unable to set pins back to inputs.\n");
+		ret = 1;
 	}
 
-	if ((f = ftdi_usb_close(ftdic)) < 0) {
-		msg_perr("Unable to close FTDI device: %d (%s)\n", f,
+	const int close_ret = ftdi_usb_close(ftdic);
+	if (close_ret < 0) {
+		msg_perr("Unable to close FTDI device: %d (%s)\n", close_ret,
 		         ftdi_get_error_string(ftdic));
-		return f;
+		ret = 1;
 	}
 
 	free(spi_data);
-	return 0;
+	return ret;
+}
+
+static bool ft2232_spi_command_fits(const struct spi_command *cmd, size_t buffer_size)
+{
+	const size_t cmd_len = 3; /* same length for any ft2232 command */
+	return
+		/* commands for CS# assertion and de-assertion: */
+		cmd_len + cmd_len
+		/* commands for either a write, a read or both: */
+		+ (cmd->writecnt && cmd->readcnt ? cmd_len + cmd_len : cmd_len)
+		/* payload (only writecnt; readcnt concerns another buffer): */
+		+ cmd->writecnt
+		<= buffer_size;
 }
 
 /* Returns 0 upon success, a negative number upon errors. */
-static int ft2232_spi_send_command(const struct flashctx *flash,
-				   unsigned int writecnt, unsigned int readcnt,
-				   const unsigned char *writearr,
-				   unsigned char *readarr)
+static int ft2232_spi_send_multicommand(const struct flashctx *flash, struct spi_command *cmds)
 {
 	struct ft2232_data *spi_data = flash->mst->spi.data;
 	struct ftdi_context *ftdic = &spi_data->ftdic_context;
-	static unsigned char *buf = NULL;
-	/* failed is special. We use bitwise ops, but it is essentially bool. */
-	int i = 0, ret = 0, failed = 0;
-	size_t bufsize;
-	static size_t oldbufsize = 0;
+	static unsigned char buf[FTDI_HW_BUFFER_SIZE];
+	size_t i = 0;
+	int ret = 0;
 
-	if (writecnt > 65536 || readcnt > 65536)
-		return SPI_INVALID_LENGTH;
+	/*
+	 * Minimize FTDI-calls by packing as many commands as possible together.
+	 */
+	for (; cmds->writecnt || cmds->readcnt; cmds++) {
 
-	/* buf is not used for the response from the chip. */
-	bufsize = max(writecnt + 9, 260 + 9);
-	/* Never shrink. realloc() calls are expensive. */
-	if (!buf || bufsize > oldbufsize) {
-		buf = realloc(buf, bufsize);
-		if (!buf) {
-			msg_perr("Out of memory!\n");
-			/* TODO: What to do with buf? */
+		if (cmds->writecnt > 65536 || cmds->readcnt > 65536)
+			return SPI_INVALID_LENGTH;
+
+		if (!ft2232_spi_command_fits(cmds, FTDI_HW_BUFFER_SIZE - i)) {
+			msg_perr("Command does not fit\n");
 			return SPI_GENERIC_ERROR;
 		}
-		oldbufsize = bufsize;
-	}
 
-	/*
-	 * Minimize USB transfers by packing as many commands as possible
-	 * together. If we're not expecting to read, we can assert CS#, write,
-	 * and deassert CS# all in one shot. If reading, we do three separate
-	 * operations.
-	 */
-	msg_pspew("Assert CS#\n");
-	buf[i++] = SET_BITS_LOW;
-	buf[i++] = ~ 0x08 & spi_data->pinlvl; /* assert CS (3rd) bit only */
-	buf[i++] = spi_data->pindir;
+		msg_pspew("Assert CS#\n");
+		buf[i++] = SET_BITS_LOW;
+		buf[i++] = 0; /* assert CS# pins, all other output pins stay low */
+		buf[i++] = spi_data->pindir;
 
-	if (writecnt) {
-		buf[i++] = MPSSE_DO_WRITE | MPSSE_WRITE_NEG;
-		buf[i++] = (writecnt - 1) & 0xff;
-		buf[i++] = ((writecnt - 1) >> 8) & 0xff;
-		memcpy(buf + i, writearr, writecnt);
-		i += writecnt;
-	}
+		/* WREN, OP(PROGRAM, ERASE), ADDR, DATA */
+		if (cmds->writecnt) {
+			buf[i++] = MPSSE_DO_WRITE | MPSSE_WRITE_NEG;
+			buf[i++] = (cmds->writecnt - 1) & 0xff;
+			buf[i++] = ((cmds->writecnt - 1) >> 8) & 0xff;
+			memcpy(buf + i, cmds->writearr, cmds->writecnt);
+			i += cmds->writecnt;
+		}
 
-	/*
-	 * Optionally terminate this batch of commands with a
-	 * read command, then do the fetch of the results.
-	 */
-	if (readcnt) {
-		buf[i++] = MPSSE_DO_READ;
-		buf[i++] = (readcnt - 1) & 0xff;
-		buf[i++] = ((readcnt - 1) >> 8) & 0xff;
+		/* An optional read command */
+		if (cmds->readcnt) {
+			buf[i++] = MPSSE_DO_READ;
+			buf[i++] = (cmds->readcnt - 1) & 0xff;
+			buf[i++] = ((cmds->readcnt - 1) >> 8) & 0xff;
+		}
+
+		/* Add final de-assert CS# */
+		msg_pspew("De-assert CS#\n");
+		buf[i++] = SET_BITS_LOW;
+		buf[i++] = spi_data->cs_bits;
+		buf[i++] = spi_data->pindir;
+
+		/* continue if there is no read-cmd and further cmds exist */
+		if (!cmds->readcnt &&
+				((cmds + 1)->writecnt || (cmds + 1)->readcnt) &&
+				ft2232_spi_command_fits((cmds + 1), FTDI_HW_BUFFER_SIZE - i)) {
+			continue;
+		}
+
 		ret = send_buf(ftdic, buf, i);
-		failed = ret;
-		/* We can't abort here, we still have to deassert CS#. */
-		if (ret)
-			msg_perr("send_buf failed before read: %i\n", ret);
 		i = 0;
-		if (ret == 0) {
-			/*
-			 * FIXME: This is unreliable. There's no guarantee that
-			 * we read the response directly after sending the read
-			 * command. We may be scheduled out etc.
-			 */
-			ret = get_buf(ftdic, readarr, readcnt);
-			failed |= ret;
-			/* We can't abort here either. */
-			if (ret)
+		if (ret) {
+			msg_perr("send_buf failed: %i\n", ret);
+			break;
+		}
+
+		if (cmds->readcnt) {
+			ret = get_buf(ftdic, cmds->readarr, cmds->readcnt);
+			if (ret) {
 				msg_perr("get_buf failed: %i\n", ret);
+				break;
+			}
 		}
 	}
-
-	msg_pspew("De-assert CS#\n");
-	buf[i++] = SET_BITS_LOW;
-	buf[i++] = spi_data->pinlvl;
-	buf[i++] = spi_data->pindir;
-	ret = send_buf(ftdic, buf, i);
-	failed |= ret;
-	if (ret)
-		msg_perr("send_buf failed at end: %i\n", ret);
-
-	return failed ? -1 : 0;
+	return ret ? -1 : 0;
 }
 
 static const struct spi_master spi_master_ft2232 = {
 	.features	= SPI_MASTER_4BA,
 	.max_data_read	= 64 * 1024,
 	.max_data_write	= 256,
-	.command	= ft2232_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
+	.command	= default_spi_send_command,
+	.multicommand	= ft2232_spi_send_multicommand,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
 	.write_aai	= default_spi_write_aai,
@@ -316,7 +322,7 @@ static int ft2232_spi_init(void)
 	char *arg;
 	double mpsse_clk;
 
-	uint8_t pinlvl = 0x08;
+	uint8_t cs_bits = 0x08;
 	uint8_t pindir = 0x0b;
 	struct ftdi_context ftdic;
 	struct ft2232_data *spi_data;
@@ -338,7 +344,7 @@ static int ft2232_spi_init(void)
 			/* JTAGkey(2) needs to enable its output via Bit4 / GPIOL0
 			*  value: 0x18  OE=high, CS=high, DI=low, DO=low, SK=low
 			*    dir: 0x1b  OE=output, CS=output, DI=input, DO=output, SK=output */
-			pinlvl = 0x18;
+			cs_bits = 0x18;
 			pindir = 0x1b;
 		} else if (!strcasecmp(arg, "picotap")) {
 			ft2232_vid = GOEPEL_VID;
@@ -356,7 +362,7 @@ static int ft2232_spi_init(void)
 			/* In its default configuration it is a jtagkey clone */
 			ft2232_type = FTDI_FT2232H_PID;
 			channel_count = 2;
-			pinlvl = 0x18;
+			cs_bits = 0x18;
 			pindir = 0x1b;
 		} else if (!strcasecmp(arg, "openmoko")) {
 			ft2232_vid = FIC_VID;
@@ -369,7 +375,7 @@ static int ft2232_spi_init(void)
 			/* arm-usb-ocd(-h) has an output buffer that needs to be enabled by pulling ADBUS4 low.
 			*  value: 0x08  #OE=low, CS=high, DI=low, DO=low, SK=low
 			*    dir: 0x1b  #OE=output, CS=output, DI=input, DO=output, SK=output */
-			pinlvl = 0x08;
+			cs_bits = 0x08;
 			pindir = 0x1b;
 		} else if (!strcasecmp(arg, "arm-usb-tiny")) {
 			ft2232_vid = OLIMEX_VID;
@@ -380,7 +386,7 @@ static int ft2232_spi_init(void)
 			ft2232_type = OLIMEX_ARM_OCD_H_PID;
 			channel_count = 2;
 			/* See arm-usb-ocd */
-			pinlvl = 0x08;
+			cs_bits = 0x08;
 			pindir = 0x1b;
 		} else if (!strcasecmp(arg, "arm-usb-tiny-h")) {
 			ft2232_vid = OLIMEX_VID;
@@ -459,66 +465,19 @@ static int ft2232_spi_init(void)
 	}
 	free(arg);
 
-	/* Allows setting multiple GPIOL pins to high, for example: csgpiol=012 */
 	arg = extract_programmer_param("csgpiol");
 	if (arg) {
-		unsigned int ngpios = strlen(arg);
-		for (unsigned int i = 0; i <= ngpios; i++) {
-			int temp = arg[i] - '0';
-			if (ngpios == 0 || (ngpios != i && (temp < 0 || temp > 3))) {
-				msg_perr("Error: Invalid GPIOLs specified: \"%s\".\n"
-					 "Valid values are numbers between 0 and 3. "
-					 "Multiple GPIOLs can be specified.\n", arg);
-				free(arg);
-				return -2;
-			} else {
-				unsigned int pin = temp + 4;
-				pinlvl |= 1 << pin;
-				pindir |= 1 << pin;
-			}
-		}
-	}
-	free(arg);
-
-	/* Allows setting GPIOL pins high, low or input (high-z) */
-	arg = extract_programmer_param("gpiol");
-	if (arg) {
-		int ok = 0;
-		if (strlen(arg) == 4) {
-			ok = 1;
-			for (int i = 0; i < 4; i++) {
-				unsigned int pin = i + 4;
-				switch (toupper(arg[i])) {
-					case 'H':
-						pinlvl |= 1 << pin;
-						pindir |= 1 << pin;
-						break;
-					case 'L':
-						pinlvl &= ~(1 << pin);
-						pindir |= 1 << pin;
-						break;
-					case 'Z':
-						pindir &= ~(1 << pin);
-						break;
-					case 'X':
-						break;
-					default:
-						ok = 0;
-				}
-			}
-		}
-		if (!ok) {
-			msg_perr("Error: Invalid GPIOLs specified: \"%s\".\n"
-				 "Valid values are 4 character strings of H, L, Z and X.\n"
-				 "    H - Set GPIOL output high\n"
-				 "    L - Set GPIOL output low\n"
-				 "    Z - Set GPIOL as input (high impedance)\n"
-				 "    X - Leave as programmer default\n"
-				 "Example: gpiol=LZXH drives GPIOL 0 low, and GPIOL 3 high, sets GPIOL 1\n"
-				 "to an input and leaves GPIOL 2 set according to the programmer type.\n", arg);
+		char *endptr;
+		unsigned int temp = strtoul(arg, &endptr, 10);
+		if (*endptr || endptr == arg || temp > 3) {
+			msg_perr("Error: Invalid GPIOL specified: \"%s\".\n"
+				 "Valid values are between 0 and 3.\n", arg);
 			free(arg);
 			return -2;
 		}
+		unsigned int pin = temp + 4;
+		cs_bits |= 1 << pin;
+		pindir |= 1 << pin;
 	}
 	free(arg);
 
@@ -562,10 +521,6 @@ static int ft2232_spi_init(void)
 		msg_perr("Unable to set latency timer (%s).\n", ftdi_get_error_string(&ftdic));
 	}
 
-	if (ftdi_write_data_set_chunksize(&ftdic, 270)) {
-		msg_perr("Unable to set chunk size (%s).\n", ftdi_get_error_string(&ftdic));
-	}
-
 	if (ftdi_set_bitmode(&ftdic, 0x00, BITMODE_BITBANG_SPI) < 0) {
 		msg_perr("Unable to set bitmode to SPI (%s).\n", ftdi_get_error_string(&ftdic));
 	}
@@ -604,7 +559,7 @@ static int ft2232_spi_init(void)
 
 	msg_pdbg("Set data bits\n");
 	buf[0] = SET_BITS_LOW;
-	buf[1] = pinlvl;
+	buf[1] = cs_bits;
 	buf[2] = pindir;
 	if (send_buf(&ftdic, buf, 3)) {
 		ret = -8;
@@ -616,7 +571,7 @@ static int ft2232_spi_init(void)
 		msg_perr("Unable to allocate space for SPI master data\n");
 		return SPI_GENERIC_ERROR;
 	}
-	spi_data->pinlvl = pinlvl;
+	spi_data->cs_bits = cs_bits;
 	spi_data->pindir = pindir;
 	spi_data->ftdic_context = ftdic;
 

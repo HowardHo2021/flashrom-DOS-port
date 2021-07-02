@@ -519,12 +519,12 @@ int main(int argc, char *argv[])
 	}
 	msg_gdbg("\n");
 
-	if (layoutfile && read_romlayout(layoutfile)) {
+	if (layoutfile && layout_from_file(&layout, layoutfile)) {
 		ret = 1;
 		goto out;
 	}
 
-	if (!ifd && !fmap && process_include_args(get_global_layout(), include_args)) {
+	if (!ifd && !fmap && process_include_args(layout, include_args)) {
 		ret = 1;
 		goto out;
 	}
@@ -716,9 +716,7 @@ int main(int argc, char *argv[])
 		goto out_shutdown;
 	}
 
-	if (layoutfile) {
-		layout = get_global_layout();
-	} else if (ifd && (flashrom_layout_read_from_ifd(&layout, fill_flash, NULL, 0) ||
+	if (ifd && (flashrom_layout_read_from_ifd(&layout, fill_flash, NULL, 0) ||
 			   process_include_args(layout, include_args))) {
 		ret = 1;
 		goto out_shutdown;
@@ -854,10 +852,12 @@ out_release:
 out_shutdown:
 	programmer_shutdown();
 out:
-	for (i = 0; i < chipcount; i++)
+	for (i = 0; i < chipcount; i++) {
+		flashrom_layout_release(flashes[i].default_layout);
 		free(flashes[i].chip);
+	}
 
-	layout_cleanup(&include_args);
+	cleanup_include_args(&include_args);
 	free(filename);
 	free(fmapfile);
 	free(referencefile);

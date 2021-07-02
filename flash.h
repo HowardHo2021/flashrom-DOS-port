@@ -265,7 +265,7 @@ struct flashrom_flashctx {
 	chipaddr virtual_registers;
 	struct registered_master *mst;
 	const struct flashrom_layout *layout;
-	struct single_layout fallback_layout;
+	struct flashrom_layout *default_layout;
 	struct {
 		bool force;
 		bool force_boardmismatch;
@@ -416,12 +416,6 @@ __attribute__((format(printf, 2, 3)));
 #define msg_gspew(...)	print(FLASHROM_MSG_SPEW, __VA_ARGS__)	/* general debug spew  */
 #define msg_pspew(...)	print(FLASHROM_MSG_SPEW, __VA_ARGS__)	/* programmer debug spew  */
 #define msg_cspew(...)	print(FLASHROM_MSG_SPEW, __VA_ARGS__)	/* chip debug spew  */
-
-/* layout.c */
-int register_include_arg(struct layout_include_args **args, const char *arg);
-int read_romlayout(const char *name);
-int normalize_romentries(const struct flashctx *flash);
-void layout_cleanup(struct layout_include_args **args);
 
 /* spi.c */
 struct spi_command {

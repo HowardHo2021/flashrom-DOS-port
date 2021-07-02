@@ -912,51 +912,53 @@ void prettyprint_ich_descriptor_upper_map(const struct ich_desc_upper_map *umap)
 	msg_pdbg2("\n");
 }
 
+static inline void warn_peculiar_desc(const bool warn_if, const char *const name)
+{
+	if (!warn_if)
+		return;
+	msg_pwarn("Peculiar flash descriptor, assuming %s compatibility.\n", name);
+}
+
 /*
  * Guesses a minimum chipset version based on the maximum number of
- * soft straps per generation.
+ * soft straps per generation and presence of the MIP base (MDTBA).
  */
-static enum ich_chipset guess_ich_chipset_from_content(const struct ich_desc_content *const content)
+static enum ich_chipset guess_ich_chipset_from_content(const struct ich_desc_content *const content,
+						       const struct ich_desc_upper_map *const upper)
 {
 	if (content->ICCRIBA == 0x00) {
 		if (content->MSL == 0 && content->ISL <= 2)
 			return CHIPSET_ICH8;
-		else if (content->ISL <= 2)
+		if (content->ISL <= 2)
 			return CHIPSET_ICH9;
-		else if (content->ISL <= 10)
+		if (content->ISL <= 10)
 			return CHIPSET_ICH10;
-		else if (content->ISL <= 16)
-			return CHIPSET_5_SERIES_IBEX_PEAK;
-		else if (content->FLMAP2 == 0) {
-			if (content->ISL == 23)
-				return CHIPSET_GEMINI_LAKE;
-			else if (content->ISL != 19)
-				msg_pwarn("Peculiar firmware descriptor, assuming Apollo Lake compatibility.\n");
-			return CHIPSET_APOLLO_LAKE;
+		if (content->FLMAP2 == 0) {
+			if (content->ISL == 19)
+				return CHIPSET_APOLLO_LAKE;
+			warn_peculiar_desc(content->ISL != 23, "Gemini Lake");
+			return CHIPSET_GEMINI_LAKE;
 		}
-		msg_pwarn("Peculiar firmware descriptor, assuming Ibex Peak compatibility.\n");
+		warn_peculiar_desc(content->ISL != 16, "Ibex Peak");
 		return CHIPSET_5_SERIES_IBEX_PEAK;
-	} else if (content->ICCRIBA < 0x31 && content->FMSBA < 0x30) {
-		if (content->MSL == 0 && content->ISL <= 17)
-			return CHIPSET_BAYTRAIL;
-		else if (content->MSL <= 1 && content->ISL <= 18)
-			return CHIPSET_6_SERIES_COUGAR_POINT;
-		else if (content->MSL <= 1 && content->ISL <= 21)
+	} else if (upper->MDTBA == 0x00) {
+		if (content->ICCRIBA < 0x31 && content->FMSBA < 0x30) {
+			if (content->MSL == 0 && content->ISL <= 17)
+				return CHIPSET_BAYTRAIL;
+			if (content->MSL <= 1 && content->ISL <= 18)
+				return CHIPSET_6_SERIES_COUGAR_POINT;
+			warn_peculiar_desc(content->MSL != 1 || content->ISL != 21, "Lynx Point");
 			return CHIPSET_8_SERIES_LYNX_POINT;
-		msg_pwarn("Peculiar firmware descriptor, assuming Wildcat Point compatibility.\n");
-		return CHIPSET_9_SERIES_WILDCAT_POINT;
-	} else if (content->ICCRIBA < 0x34) {
-		if (content->NM == 6)
+		}
+		if (content->NM == 6) {
+			warn_peculiar_desc(content->ICCRIBA > 0x34, "C620 series");
 			return CHIPSET_C620_SERIES_LEWISBURG;
-		else
-			return CHIPSET_100_SERIES_SUNRISE_POINT;
-	} else if (content->ICCRIBA == 0x34) {
-		if (content->NM == 6)
-			return CHIPSET_C620_SERIES_LEWISBURG;
-		else
-			return CHIPSET_300_SERIES_CANNON_POINT;
+		}
+		warn_peculiar_desc(content->ICCRIBA != 0x31, "100 series");
+		return CHIPSET_100_SERIES_SUNRISE_POINT;
 	} else {
-		msg_pwarn("Unknown firmware descriptor, assuming 300 series compatibility.\n");
+		if (content->ICCRIBA != 0x34)
+			msg_pwarn("Unknown flash descriptor, assuming 300 series compatibility.\n");
 		return CHIPSET_300_SERIES_CANNON_POINT;
 	}
 }
@@ -968,37 +970,36 @@ static enum ich_chipset guess_ich_chipset_from_content(const struct ich_desc_con
  * tinction because of the dropped number of regions field (NR).
  */
 static enum ich_chipset guess_ich_chipset(const struct ich_desc_content *const content,
-					  const struct ich_desc_component *const component)
+					  const struct ich_desc_component *const component,
+					  const struct ich_desc_upper_map *const upper)
 {
-	const enum ich_chipset guess = guess_ich_chipset_from_content(content);
+	const enum ich_chipset guess = guess_ich_chipset_from_content(content, upper);
 
 	switch (guess) {
 	case CHIPSET_300_SERIES_CANNON_POINT:
 	case CHIPSET_400_SERIES_COMET_POINT:
 	case CHIPSET_GEMINI_LAKE:
 		/* `freq_read` was repurposed, so can't check on it any more. */
-		return guess;
+		break;
 	case CHIPSET_100_SERIES_SUNRISE_POINT:
 	case CHIPSET_C620_SERIES_LEWISBURG:
 	case CHIPSET_APOLLO_LAKE:
 		if (component->modes.freq_read != 6) {
-			msg_pwarn("\nThe firmware descriptor looks like a Skylake/Sunrise Point descriptor.\n"
+			msg_pwarn("\nThe flash descriptor looks like a Skylake/Sunrise Point descriptor.\n"
 				  "However, the read frequency isn't set to 17MHz (the only valid value).\n"
 				  "Please report this message, the output of `ich_descriptors_tool` for\n"
 				  "your descriptor and the output of `lspci -nn` to flashrom@flashrom.org\n\n");
-			return CHIPSET_9_SERIES_WILDCAT_POINT;
 		}
-		return guess;
+		break;
 	default:
 		if (component->modes.freq_read == 6) {
-			msg_pwarn("\nThe firmware descriptor has the read frequency set to 17MHz. However,\n"
+			msg_pwarn("\nThe flash descriptor has the read frequency set to 17MHz. However,\n"
 				  "it doesn't look like a Skylake/Sunrise Point compatible descriptor.\n"
 				  "Please report this message, the output of `ich_descriptors_tool` for\n"
 				  "your descriptor and the output of `lspci -nn` to flashrom@flashrom.org\n\n");
-			return CHIPSET_100_SERIES_SUNRISE_POINT;
 		}
-		return guess;
 	}
+	return guess;
 }
 
 /* len is the length of dump in bytes */
@@ -1033,25 +1034,6 @@ int read_ich_descriptors_from_dump(const uint32_t *const dump, const size_t len,
 	desc->component.FLILL	= dump[(getFCBA(&desc->content) >> 2) + 1];
 	desc->component.FLPB	= dump[(getFCBA(&desc->content) >> 2) + 2];
 
-	if (*cs == CHIPSET_ICH_UNKNOWN) {
-		*cs = guess_ich_chipset(&desc->content, &desc->component);
-		prettyprint_ich_chipset(*cs);
-	}
-
-	/* region */
-	const ssize_t nr = ich_number_of_regions(*cs, &desc->content);
-	if (nr < 0 || len < getFRBA(&desc->content) + (size_t)nr * 4)
-		return ICH_RET_OOB;
-	for (i = 0; i < nr; i++)
-		desc->region.FLREGs[i] = dump[(getFRBA(&desc->content) >> 2) + i];
-
-	/* master */
-	const ssize_t nm = ich_number_of_masters(*cs, &desc->content);
-	if (nm < 0 || len < getFMBA(&desc->content) + (size_t)nm * 4)
-		return ICH_RET_OOB;
-	for (i = 0; i < nm; i++)
-		desc->master.FLMSTRs[i] = dump[(getFMBA(&desc->content) >> 2) + i];
-
 	/* upper map */
 	desc->upper.FLUMAP1 = dump[(UPPER_MAP_OFFSET >> 2) + 0];
 
@@ -1068,6 +1050,25 @@ int read_ich_descriptors_from_dump(const uint32_t *const dump, const size_t len,
 		desc->upper.vscc_table[i].JID  = dump[(getVTBA(&desc->upper) >> 2) + i * 2 + 0];
 		desc->upper.vscc_table[i].VSCC = dump[(getVTBA(&desc->upper) >> 2) + i * 2 + 1];
 	}
+
+	if (*cs == CHIPSET_ICH_UNKNOWN) {
+		*cs = guess_ich_chipset(&desc->content, &desc->component, &desc->upper);
+		prettyprint_ich_chipset(*cs);
+	}
+
+	/* region */
+	const ssize_t nr = ich_number_of_regions(*cs, &desc->content);
+	if (nr < 0 || len < getFRBA(&desc->content) + (size_t)nr * 4)
+		return ICH_RET_OOB;
+	for (i = 0; i < nr; i++)
+		desc->region.FLREGs[i] = dump[(getFRBA(&desc->content) >> 2) + i];
+
+	/* master */
+	const ssize_t nm = ich_number_of_masters(*cs, &desc->content);
+	if (nm < 0 || len < getFMBA(&desc->content) + (size_t)nm * 4)
+		return ICH_RET_OOB;
+	for (i = 0; i < nm; i++)
+		desc->master.FLMSTRs[i] = dump[(getFMBA(&desc->content) >> 2) + i];
 
 	/* MCH/PROC (aka. North) straps */
 	if (len < getFMSBA(&desc->content) + desc->content.MSL * 4)
@@ -1257,7 +1258,9 @@ int read_ich_descriptors_via_fdo(enum ich_chipset cs, void *spibar, struct ich_d
  *	   1 if the descriptor couldn't be parsed,
  *	   2 when out of memory.
  */
-int layout_from_ich_descriptors(struct ich_layout *const layout, const void *const dump, const size_t len)
+int layout_from_ich_descriptors(
+		struct flashrom_layout **const layout,
+		const void *const dump, const size_t len)
 {
 	static const char *const regions[] = {
 		"fd", "bios", "me", "gbe", "pd", "reg5", "bios2", "reg7", "ec", "reg9", "ie",
@@ -1273,25 +1276,22 @@ int layout_from_ich_descriptors(struct ich_layout *const layout, const void *con
 		return 1;
 	}
 
-	memset(layout, 0x00, sizeof(*layout));
+	if (flashrom_layout_new(layout))
+		return 2;
 
-	ssize_t i, j;
+	ssize_t i;
 	const ssize_t nr = MIN(ich_number_of_regions(cs, &desc.content), (ssize_t)ARRAY_SIZE(regions));
-	for (i = 0, j = 0; i < nr; ++i) {
+	for (i = 0; i < nr; ++i) {
 		const chipoff_t base = ICH_FREG_BASE(desc.region.FLREGs[i]);
 		const chipoff_t limit = ICH_FREG_LIMIT(desc.region.FLREGs[i]);
 		if (limit <= base)
 			continue;
-		layout->entries[j].start = base;
-		layout->entries[j].end = limit;
-		layout->entries[j].included = false;
-		layout->entries[j].name = strdup(regions[i]);
-		if (!layout->entries[j].name)
+		if (flashrom_layout_add_region(*layout, base, limit, regions[i])) {
+			flashrom_layout_release(*layout);
+			*layout = NULL;
 			return 2;
-		++j;
+		}
 	}
-	layout->base.entries = layout->entries;
-	layout->base.num_entries = j;
 	return 0;
 }
 
