@@ -73,8 +73,6 @@ static int may_register_shutdown = 0;
 /* Did we change something or was every erase/write skipped (if any)? */
 static bool all_skipped = true;
 
-static int check_block_eraser(const struct flashctx *flash, int k, int log);
-
 /* Register a function to be executed on programmer shutdown.
  * The advantage over atexit() is that you can supply a void pointer which will
  * be used as parameter to the registered function upon programmer shutdown.
@@ -272,7 +270,7 @@ int read_memmapped(struct flashctx *flash, uint8_t *buf, unsigned int start,
  * needle and remove everything from the first occurrence of needle to the next
  * delimiter from haystack.
  */
-char *extract_param(const char *const *haystack, const char *needle, const char *delim)
+static char *extract_param(const char *const *haystack, const char *needle, const char *delim)
 {
 	char *param_pos, *opt_pos, *rest;
 	char *opt = NULL;
@@ -331,6 +329,31 @@ char *extract_param(const char *const *haystack, const char *needle, const char 
 char *extract_programmer_param(const char *param_name)
 {
 	return extract_param(&programmer_param, param_name, ",");
+}
+
+static int check_block_eraser(const struct flashctx *flash, int k, int log)
+{
+	struct block_eraser eraser = flash->chip->block_erasers[k];
+
+	if (!eraser.block_erase && !eraser.eraseblocks[0].count) {
+		if (log)
+			msg_cdbg("not defined. ");
+		return 1;
+	}
+	if (!eraser.block_erase && eraser.eraseblocks[0].count) {
+		if (log)
+			msg_cdbg("eraseblock layout is known, but matching "
+				 "block erase function is not implemented. ");
+		return 1;
+	}
+	if (eraser.block_erase && !eraser.eraseblocks[0].count) {
+		if (log)
+			msg_cdbg("block erase function found, but "
+				 "eraseblock layout is not defined. ");
+		return 1;
+	}
+	// TODO: Once erase functions are annotated with allowed buses, check that as well.
+	return 0;
 }
 
 /* Returns the number of well-defined erasers for a chip. */
@@ -1024,7 +1047,32 @@ static int write_buf_to_include_args(const struct flashctx *const flash,
 	return 0;
 }
 
-static int read_by_layout(struct flashctx *, uint8_t *);
+/**
+ * @brief Reads the included layout regions into a buffer.
+ *
+ * If there is no layout set in the given flash context, the whole chip will
+ * be read.
+ *
+ * @param flashctx Flash context to be used.
+ * @param buffer   Buffer of full chip size to read into.
+ * @return 0 on success,
+ *	   1 if any read fails.
+ */
+static int read_by_layout(struct flashctx *const flashctx, uint8_t *const buffer)
+{
+	const struct flashrom_layout *const layout = get_layout(flashctx);
+	const struct romentry *entry = NULL;
+
+	while ((entry = layout_next_included(layout, entry))) {
+		const chipoff_t region_start	= entry->start;
+		const chipsize_t region_len	= entry->end - entry->start + 1;
+
+		if (flashctx->chip->read(flashctx, buffer + region_start, region_start, region_len))
+			return 1;
+	}
+	return 0;
+}
+
 int read_flash_to_file(struct flashctx *flash, const char *filename)
 {
 	unsigned long size = flash->chip->total_size * 1024;
@@ -1123,57 +1171,6 @@ static int selfcheck_eraseblocks(const struct flashchip *chip)
 		}
 	}
 	return ret;
-}
-
-static int check_block_eraser(const struct flashctx *flash, int k, int log)
-{
-	struct block_eraser eraser = flash->chip->block_erasers[k];
-
-	if (!eraser.block_erase && !eraser.eraseblocks[0].count) {
-		if (log)
-			msg_cdbg("not defined. ");
-		return 1;
-	}
-	if (!eraser.block_erase && eraser.eraseblocks[0].count) {
-		if (log)
-			msg_cdbg("eraseblock layout is known, but matching "
-				 "block erase function is not implemented. ");
-		return 1;
-	}
-	if (eraser.block_erase && !eraser.eraseblocks[0].count) {
-		if (log)
-			msg_cdbg("block erase function found, but "
-				 "eraseblock layout is not defined. ");
-		return 1;
-	}
-	// TODO: Once erase functions are annotated with allowed buses, check that as well.
-	return 0;
-}
-
-/**
- * @brief Reads the included layout regions into a buffer.
- *
- * If there is no layout set in the given flash context, the whole chip will
- * be read.
- *
- * @param flashctx Flash context to be used.
- * @param buffer   Buffer of full chip size to read into.
- * @return 0 on success,
- *	   1 if any read fails.
- */
-static int read_by_layout(struct flashctx *const flashctx, uint8_t *const buffer)
-{
-	const struct flashrom_layout *const layout = get_layout(flashctx);
-	const struct romentry *entry = NULL;
-
-	while ((entry = layout_next_included(layout, entry))) {
-		const chipoff_t region_start	= entry->start;
-		const chipsize_t region_len	= entry->end - entry->start + 1;
-
-		if (flashctx->chip->read(flashctx, buffer + region_start, region_start, region_len))
-			return 1;
-	}
-	return 0;
 }
 
 typedef int (*erasefn_t)(struct flashctx *, unsigned int addr, unsigned int len);
