@@ -43,7 +43,16 @@ void probe_spi_st95_test_success(void **state); /* spi95.c */
 /* init_shutdown.c */
 void dummy_init_and_shutdown_test_success(void **state);
 void mec1308_init_and_shutdown_test_success(void **state);
+void dediprog_init_and_shutdown_test_success(void **state);
 void ene_lpc_init_and_shutdown_test_success(void **state);
 void linux_spi_init_and_shutdown_test_success(void **state);
+
+/* layout.c */
+void included_regions_dont_overlap_test_success(void **state);
+void included_regions_overlap_test_success(void **state);
+void region_not_included_overlap_test_success(void **state);
+void layout_pass_sanity_checks_test_success(void **state);
+void layout_region_invalid_address_test_success(void **state);
+void layout_region_invalid_range_test_success(void **state);
 
 #endif /* TESTS_H */

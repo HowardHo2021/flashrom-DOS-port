@@ -19,9 +19,11 @@ srcs = [
   'flashrom.c',
   'spi25.c',
   'init_shutdown.c',
+  'layout.c',
 ]
 
 mocks = [
+  '-Wl,--wrap=strdup',
   '-Wl,--wrap=physunmap',
   '-Wl,--wrap=physmap',
   '-Wl,--wrap=spi_send_command',
@@ -39,6 +41,13 @@ mocks = [
   '-Wl,--wrap=test_inw',
   '-Wl,--wrap=test_outl',
   '-Wl,--wrap=test_inl',
+  '-Wl,--wrap=usb_dev_get_by_vid_pid_number',
+  '-Wl,--wrap=libusb_set_configuration',
+  '-Wl,--wrap=libusb_claim_interface',
+  '-Wl,--wrap=libusb_control_transfer',
+  '-Wl,--wrap=libusb_release_interface',
+  '-Wl,--wrap=libusb_close',
+  '-Wl,--wrap=libusb_exit',
   '-Wl,--gc-sections',
 ]
 

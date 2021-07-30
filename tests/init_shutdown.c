@@ -23,13 +23,17 @@ static void run_lifecycle(void **state, const struct programmer_entry *prog, con
 {
 	(void) state; /* unused */
 
+	char *param_dup = strdup(param);
+
 	printf("Testing programmer_init for programmer=%s ...\n", prog->name);
-	assert_int_equal(0, programmer_init(prog, strdup(param)));
+	assert_int_equal(0, programmer_init(prog, param_dup));
 	printf("... programmer_init for programmer=%s successful\n", prog->name);
 
 	printf("Testing programmer_shutdown for programmer=%s ...\n", prog->name);
 	assert_int_equal(0, programmer_shutdown());
 	printf("... programmer_shutdown for programmer=%s successful\n", prog->name);
+
+	free(param_dup);
 }
 
 void dummy_init_and_shutdown_test_success(void **state)
@@ -78,6 +82,40 @@ void mec1308_init_and_shutdown_test_success(void **state)
 
 	will_return_always(__wrap_sio_read, 0x4d); /* MEC1308_DEVICE_ID_VAL */
 	run_lifecycle(state, &programmer_mec1308, "");
+
+	io_mock_register(NULL);
+#else
+	skip();
+#endif
+}
+
+int dediprog_libusb_control_transfer(void *state,
+					libusb_device_handle *devh,
+					uint8_t bmRequestType,
+					uint8_t bRequest,
+					uint16_t wValue,
+					uint16_t wIndex,
+					unsigned char *data,
+					uint16_t wLength,
+					unsigned int timeout)
+{
+	if (bRequest == 0x08 /* dediprog_cmds CMD_READ_PROG_INFO */) {
+		/* Provide dediprog Device String into data buffer */
+		memcpy(data, "SF600 V:7.2.2   ", wLength);
+	}
+	return wLength;
+}
+
+void dediprog_init_and_shutdown_test_success(void **state)
+{
+#if CONFIG_DEDIPROG == 1
+	const struct io_mock dediprog_io = {
+		.libusb_control_transfer = dediprog_libusb_control_transfer,
+	};
+
+	io_mock_register(&dediprog_io);
+
+	run_lifecycle(state, &programmer_dediprog, "voltage=3.5V");
 
 	io_mock_register(NULL);
 #else
