@@ -53,6 +53,22 @@ void *__wrap_physmap(const char *descr, uintptr_t phys_addr, size_t len)
 	return NULL;
 }
 
+struct pci_dev mock_pci_dev = {
+	.device_id = MOCK_HANDLE,
+};
+
+struct pci_dev *__wrap_pcidev_init(void *devs, int bar)
+{
+	LOG_ME;
+	return &mock_pci_dev;
+}
+
+uintptr_t __wrap_pcidev_readbar(void *dev, int bar)
+{
+	LOG_ME;
+	return MOCK_HANDLE;
+}
+
 void __wrap_sio_write(uint16_t port, uint8_t reg, uint8_t data)
 {
 	LOG_ME;
@@ -67,19 +83,47 @@ uint8_t __wrap_sio_read(uint16_t port, uint8_t reg)
 int __wrap_open(const char *pathname, int flags)
 {
 	LOG_ME;
+	if (current_io && current_io->open)
+		return current_io->open(current_io->state, pathname, flags);
 	return MOCK_HANDLE;
 }
 
 int __wrap_open64(const char *pathname, int flags)
 {
 	LOG_ME;
+	if (current_io && current_io->open)
+		return current_io->open(current_io->state, pathname, flags);
 	return MOCK_HANDLE;
 }
 
 int __wrap_ioctl(int fd, unsigned long int request, ...)
 {
 	LOG_ME;
+	if (current_io && current_io->ioctl) {
+		va_list args;
+		int out;
+		va_start(args, request);
+		out = current_io->ioctl(current_io->state, fd, request, args);
+		va_end(args);
+		return out;
+	}
 	return MOCK_HANDLE;
+}
+
+int __wrap_write(int fd, const void *buf, size_t sz)
+{
+	LOG_ME;
+	if (current_io && current_io->write)
+		return current_io->write(current_io->state, fd, buf, sz);
+	return sz;
+}
+
+int __wrap_read(int fd, void *buf, size_t sz)
+{
+	LOG_ME;
+	if (current_io && current_io->read)
+		return current_io->read(current_io->state, fd, buf, sz);
+	return sz;
 }
 
 FILE *__wrap_fopen(const char *pathname, const char *mode)
@@ -230,9 +274,11 @@ int main(void)
 	const struct CMUnitTest init_shutdown_tests[] = {
 		cmocka_unit_test(dummy_init_and_shutdown_test_success),
 		cmocka_unit_test(mec1308_init_and_shutdown_test_success),
+		cmocka_unit_test(nicrealtek_init_and_shutdown_test_success),
 		cmocka_unit_test(dediprog_init_and_shutdown_test_success),
 		cmocka_unit_test(ene_lpc_init_and_shutdown_test_success),
 		cmocka_unit_test(linux_spi_init_and_shutdown_test_success),
+		cmocka_unit_test(realtek_mst_init_and_shutdown_test_success),
 	};
 	ret |= cmocka_run_group_tests_name("init_shutdown.c tests", init_shutdown_tests, NULL, NULL);
 
@@ -245,6 +291,12 @@ int main(void)
 		cmocka_unit_test(layout_region_invalid_range_test_success),
 	};
 	ret |= cmocka_run_group_tests_name("layout.c tests", layout_tests, NULL, NULL);
+
+	const struct CMUnitTest chip_tests[] = {
+		cmocka_unit_test(erase_chip_test_success),
+		cmocka_unit_test(erase_chip_with_dummyflasher_test_success),
+	};
+	ret |= cmocka_run_group_tests_name("chip.c tests", chip_tests, NULL, NULL);
 
 	return ret;
 }

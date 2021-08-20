@@ -395,20 +395,6 @@ static int nicintel_ee_erase_82580(struct flashctx *flash, unsigned int addr, un
 	return nicintel_ee_write_82580(flash, NULL, addr, len);
 }
 
-static const struct opaque_master opaque_master_nicintel_ee_82580 = {
-	.probe = nicintel_ee_probe_82580,
-	.read = nicintel_ee_read,
-	.write = nicintel_ee_write_82580,
-	.erase = nicintel_ee_erase_82580,
-};
-
-static const struct opaque_master opaque_master_nicintel_ee_i210 = {
-	.probe = nicintel_ee_probe_i210,
-	.read = nicintel_ee_read,
-	.write = nicintel_ee_write_i210,
-	.erase = nicintel_ee_erase_i210,
-};
-
 static int nicintel_ee_shutdown_i210(void *arg)
 {
 	if (!done_i20_write)
@@ -431,21 +417,43 @@ static int nicintel_ee_shutdown_i210(void *arg)
 
 static int nicintel_ee_shutdown_82580(void *eecp)
 {
-	uint32_t old_eec = *(uint32_t *)eecp;
-	/* Request bitbanging and unselect the chip first to be safe. */
-	if (nicintel_ee_req() || nicintel_ee_bitset(EEC, EE_CS, 1))
-		return -1;
+	int ret = 0;
 
-	/* Try to restore individual bits we care about. */
-	int ret = nicintel_ee_bitset(EEC, EE_SCK, old_eec & BIT(EE_SCK));
-	ret |= nicintel_ee_bitset(EEC, EE_SI, old_eec & BIT(EE_SI));
-	ret |= nicintel_ee_bitset(EEC, EE_CS, old_eec & BIT(EE_CS));
-	/* REQ will be cleared by hardware anyway after 2 seconds of inactivity on the SPI pins (3.3.2.1). */
-	ret |= nicintel_ee_bitset(EEC, EE_REQ, old_eec & BIT(EE_REQ));
+	if (nicintel_pci->device_id != UNPROG_DEVICE) {
+		uint32_t old_eec = *(uint32_t *)eecp;
+		/* Request bitbanging and unselect the chip first to be safe. */
+		if (nicintel_ee_req() || nicintel_ee_bitset(EEC, EE_CS, 1)) {
+			ret = -1;
+			goto out;
+		}
 
+		/* Try to restore individual bits we care about. */
+		ret = nicintel_ee_bitset(EEC, EE_SCK, old_eec & BIT(EE_SCK));
+		ret |= nicintel_ee_bitset(EEC, EE_SI, old_eec & BIT(EE_SI));
+		ret |= nicintel_ee_bitset(EEC, EE_CS, old_eec & BIT(EE_CS));
+		/* REQ will be cleared by hardware anyway after 2 seconds of inactivity
+		 * on the SPI pins (3.3.2.1). */
+		ret |= nicintel_ee_bitset(EEC, EE_REQ, old_eec & BIT(EE_REQ));
+	}
+
+out:
 	free(eecp);
 	return ret;
 }
+
+static const struct opaque_master opaque_master_nicintel_ee_82580 = {
+	.probe = nicintel_ee_probe_82580,
+	.read = nicintel_ee_read,
+	.write = nicintel_ee_write_82580,
+	.erase = nicintel_ee_erase_82580,
+};
+
+static const struct opaque_master opaque_master_nicintel_ee_i210 = {
+	.probe = nicintel_ee_probe_i210,
+	.read = nicintel_ee_read,
+	.write = nicintel_ee_write_i210,
+	.erase = nicintel_ee_erase_i210,
+};
 
 static int nicintel_ee_init(void)
 {
@@ -465,8 +473,10 @@ static int nicintel_ee_init(void)
 		if (!nicintel_eebar)
 			return 1;
 
+		uint32_t *eecp = NULL;
+
 		nicintel_pci = dev;
-		if ((dev->device_id != UNPROG_DEVICE)) {
+		if (dev->device_id != UNPROG_DEVICE) {
 			uint32_t eec = pci_mmio_readl(nicintel_eebar + EEC);
 
 			/* C.f. 3.3.1.5 for the detection mechanism (maybe? contradicting
@@ -477,14 +487,14 @@ static int nicintel_ee_init(void)
 				return 1;
 			}
 
-			uint32_t *eecp = malloc(sizeof(uint32_t));
+			eecp = malloc(sizeof(uint32_t));
 			if (eecp == NULL)
 				return 1;
 			*eecp = eec;
-
-			if (register_shutdown(nicintel_ee_shutdown_82580, eecp))
-				return 1;
 		}
+
+		if (register_shutdown(nicintel_ee_shutdown_82580, eecp))
+			return 1;
 
 		return register_opaque_master(&opaque_master_nicintel_ee_82580, NULL);
 	} else {
