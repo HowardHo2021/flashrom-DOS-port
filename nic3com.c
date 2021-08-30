@@ -73,17 +73,6 @@ static uint8_t nic3com_chip_readb(const struct flashctx *flash,
 	return INB(data->io_base_addr + BIOS_ROM_DATA);
 }
 
-static const struct par_master par_master_nic3com = {
-		.chip_readb		= nic3com_chip_readb,
-		.chip_readw		= fallback_chip_readw,
-		.chip_readl		= fallback_chip_readl,
-		.chip_readn		= fallback_chip_readn,
-		.chip_writeb		= nic3com_chip_writeb,
-		.chip_writew		= fallback_chip_writew,
-		.chip_writel		= fallback_chip_writel,
-		.chip_writen		= fallback_chip_writen,
-};
-
 static int nic3com_shutdown(void *par_data)
 {
 	struct nic3com_data *data = par_data;
@@ -100,6 +89,18 @@ static int nic3com_shutdown(void *par_data)
 	free(data);
 	return 0;
 }
+
+static const struct par_master par_master_nic3com = {
+		.chip_readb		= nic3com_chip_readb,
+		.chip_readw		= fallback_chip_readw,
+		.chip_readl		= fallback_chip_readl,
+		.chip_readn		= fallback_chip_readn,
+		.chip_writeb		= nic3com_chip_writeb,
+		.chip_writew		= fallback_chip_writew,
+		.chip_writel		= fallback_chip_writel,
+		.chip_writen		= fallback_chip_writen,
+		.shutdown		= nic3com_shutdown,
+};
 
 static int nic3com_init(void)
 {
@@ -150,13 +151,7 @@ static int nic3com_init(void)
 
 	max_rom_decode.parallel = 128 * 1024;
 
-	if (register_shutdown(nic3com_shutdown, data)) {
-		free(data);
-		goto init_err_cleanup_exit;
-	}
-	register_par_master(&par_master_nic3com, BUS_PARALLEL, data);
-
-	return 0;
+	return register_par_master(&par_master_nic3com, BUS_PARALLEL, data);
 
 init_err_cleanup_exit:
 	/* 3COM 3C90xB cards need a special fixup. */
