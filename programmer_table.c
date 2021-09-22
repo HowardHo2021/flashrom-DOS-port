@@ -24,10 +24,6 @@ const struct programmer_entry *const programmer_table[] = {
     &programmer_dummy,
 #endif
 
-#if CONFIG_MEC1308 == 1
-    &programmer_mec1308,
-#endif
-
 #if CONFIG_NIC3COM == 1
     &programmer_nic3com,
 #endif
@@ -90,10 +86,6 @@ const struct programmer_entry *const programmer_table[] = {
 
 #if CONFIG_DEVELOPERBOX_SPI == 1
     &programmer_developerbox,
-#endif
-
-#if CONFIG_ENE_LPC == 1
-    &programmer_ene_lpc,
 #endif
 
 #if CONFIG_RAYER_SPI == 1

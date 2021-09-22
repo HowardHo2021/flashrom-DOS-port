@@ -41,7 +41,6 @@ config_digilent_spi = get_option('config_digilent_spi')
 config_jlink_spi = get_option('config_jlink_spi')
 config_drkaiser = get_option('config_drkaiser')
 config_dummy = get_option('config_dummy')
-config_ene_lpc = get_option('config_ene_lpc')
 config_ft2232_spi = get_option('config_ft2232_spi')
 config_gfxnvidia = get_option('config_gfxnvidia')
 config_raiden_debug_spi = get_option('config_raiden_debug_spi')
@@ -49,7 +48,6 @@ config_internal = get_option('config_internal')
 config_it8212 = get_option('config_it8212')
 config_linux_mtd = get_option('config_linux_mtd')
 config_linux_spi = get_option('config_linux_spi')
-config_mec1308 = get_option('config_mec1308')
 config_mstarddc_spi = get_option('config_mstarddc_spi')
 config_nic3com = get_option('config_nic3com')
 config_nicintel_eeprom = get_option('config_nicintel_eeprom')
@@ -213,10 +211,6 @@ if config_internal
     cargs += '-DCONFIG_INTERNAL_DMI=1'
   endif
 endif
-if config_ene_lpc
-  srcs += 'ene_lpc.c'
-  cargs += '-DCONFIG_ENE_LPC=1'
-endif
 if config_it8212
   srcs += 'it8212.c'
   cargs += '-DCONFIG_IT8212=1'
@@ -228,10 +222,6 @@ endif
 if config_linux_spi
   srcs += 'linux_spi.c'
   cargs += '-DCONFIG_LINUX_SPI=1'
-endif
-if config_mec1308
-  srcs += 'mec1308.c'
-  cargs += '-DCONFIG_MEC1308=1'
 endif
 if config_mstarddc_spi
   srcs += 'mstarddc_spi.c'
