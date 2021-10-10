@@ -14,8 +14,6 @@
  * GNU General Public License for more details.
  */
 
-#if CONFIG_FT2232_SPI == 1
-
 #include <stdio.h>
 #include <strings.h>
 #include <string.h>
@@ -91,8 +89,12 @@ static const struct dev_entry devs_ft2232spi[] = {
  * "set data bits low byte" MPSSE command that sets the initial
  * state and the direction of the I/O pins. `cs_bits` pins default
  * to high and will be toggled during SPI transactions. All other
- * output pins will be kept low all the time. On exit, all pins
- * will be reconfigured as inputs.
+ * output pins will be kept low all the time. For some programmers,
+ * some reserved GPIOL* pins are used as outputs. Free GPIOL* pins
+ * are configured as inputs, while it's possible to use them either
+ * as generic gpios or as additional CS# signal(s) through the
+ * parameter(s) `gpiolX`. On exit, all pins will be reconfigured
+ * as inputs.
  *
  * The pin offsets are as follows:
  * TCK/SK is bit 0.
@@ -111,6 +113,7 @@ static const struct dev_entry devs_ft2232spi[] = {
  */
 struct ft2232_data {
 	uint8_t cs_bits;
+	uint8_t aux_bits;
 	uint8_t pindir;
 	struct ftdi_context ftdic_context;
 };
@@ -232,7 +235,8 @@ static int ft2232_spi_send_multicommand(const struct flashctx *flash, struct spi
 
 		msg_pspew("Assert CS#\n");
 		buf[i++] = SET_BITS_LOW;
-		buf[i++] = 0; /* assert CS# pins, all other output pins stay low */
+		/* assert CS# pins, keep aux_bits, all other output pins stay low */
+		buf[i++] = spi_data->aux_bits;
 		buf[i++] = spi_data->pindir;
 
 		/* WREN, OP(PROGRAM, ERASE), ADDR, DATA */
@@ -254,7 +258,7 @@ static int ft2232_spi_send_multicommand(const struct flashctx *flash, struct spi
 		/* Add final de-assert CS# */
 		msg_pspew("De-assert CS#\n");
 		buf[i++] = SET_BITS_LOW;
-		buf[i++] = spi_data->cs_bits;
+		buf[i++] = spi_data->cs_bits | spi_data->aux_bits;
 		buf[i++] = spi_data->pindir;
 
 		/* continue if there is no read-cmd and further cmds exist */
@@ -324,6 +328,7 @@ static int ft2232_spi_init(void)
 	double mpsse_clk;
 
 	uint8_t cs_bits = 0x08;
+	uint8_t aux_bits = 0x00;
 	uint8_t pindir = 0x0b;
 	struct ftdi_context ftdic;
 	struct ft2232_data *spi_data;
@@ -418,6 +423,9 @@ static int ft2232_spi_init(void)
 	}
 	free(arg);
 
+	/* Remember reserved pins before pindir gets modified. */
+	const uint8_t rsv_bits = pindir & 0xf0;
+
 	arg = extract_programmer_param("port");
 	if (arg) {
 		switch (toupper((unsigned char)*arg)) {
@@ -466,8 +474,13 @@ static int ft2232_spi_init(void)
 	}
 	free(arg);
 
+	bool csgpiol_set = false;
 	arg = extract_programmer_param("csgpiol");
 	if (arg) {
+		csgpiol_set = true;
+		msg_pwarn("Deprecation warning: `csgpiol` is deprectated and will be removed "
+			 "in the future.\nUse `gpiolX=C` instead.\n");
+
 		char *endptr;
 		unsigned int temp = strtoul(arg, &endptr, 10);
 		if (*endptr || endptr == arg || temp > 3) {
@@ -476,11 +489,80 @@ static int ft2232_spi_init(void)
 			free(arg);
 			return -2;
 		}
+
 		unsigned int pin = temp + 4;
+		if (rsv_bits & 1 << pin) {
+			msg_perr("Error: Invalid GPIOL specified: \"%s\".\n"
+				 "The pin is reserved on this programmer.\n",
+				 arg);
+			free(arg);
+			return -2;
+		}
+
 		cs_bits |= 1 << pin;
-		pindir |= 1 << pin;
+		pindir  |= 1 << pin;
 	}
 	free(arg);
+
+	/* gpiolX */
+	for (int pin = 0; pin < 4; pin++) {
+		char gpiol_param[7];
+		snprintf(gpiol_param, sizeof(gpiol_param), "gpiol%d", pin);
+		arg = extract_programmer_param(gpiol_param);
+
+		if (!arg)
+			continue;
+
+		if (csgpiol_set) {
+			msg_perr("Error: `csgpiol` and `gpiolX` are mutually exclusive.\n"
+				 "Since `csgpiol` is deprecated and will be removed in the "
+				 "future, use of `gpiolX=C` is recommended.\n");
+			free(arg);
+			return -2;
+		}
+
+		uint8_t bit = 1 << (pin + 4);
+		if (rsv_bits & bit) {
+			msg_perr("Error: Invalid GPIOL specified: \"gpiol%d=%s\".\n"
+				 "Pin GPIOL%i is reserved on this programmer.\n",
+				 pin, arg, pin);
+			free(arg);
+			return -2;
+		}
+
+		if (strlen(arg) != 1)
+			goto format_error;
+
+		switch (toupper(arg[0])) {
+			case 'H':
+				aux_bits |= bit;
+				pindir   |= bit;
+				break;
+			case 'L':
+				pindir   |= bit;
+				break;
+			case 'C':
+				cs_bits  |= bit;
+				pindir   |= bit;
+				break;
+			default:
+				goto format_error;
+		}
+
+		free(arg);
+		continue;
+
+format_error:
+		msg_perr("Error: Invalid GPIOL specified: \"gpiol%d=%s\".\n"
+			 "Valid values are H, L and C.\n"
+			 "    H - Set GPIOL output high\n"
+			 "    L - Set GPIOL output low\n"
+			 "    C - Use GPIOL as additional CS# output\n",
+			 pin, arg);
+
+		free(arg);
+		return -2;
+	}
 
 	msg_pdbg("Using device type %s %s ",
 		 get_ft2232_vendorname(ft2232_vid, ft2232_type),
@@ -564,7 +646,7 @@ static int ft2232_spi_init(void)
 
 	msg_pdbg("Set data bits\n");
 	buf[0] = SET_BITS_LOW;
-	buf[1] = cs_bits;
+	buf[1] = cs_bits | aux_bits;
 	buf[2] = pindir;
 	if (send_buf(&ftdic, buf, 3)) {
 		ret = -8;
@@ -577,6 +659,7 @@ static int ft2232_spi_init(void)
 		return SPI_GENERIC_ERROR;
 	}
 	spi_data->cs_bits = cs_bits;
+	spi_data->aux_bits = aux_bits;
 	spi_data->pindir = pindir;
 	spi_data->ftdic_context = ftdic;
 
@@ -599,4 +682,3 @@ const struct programmer_entry programmer_ft2232_spi = {
 	.unmap_flash_region	= fallback_unmap,
 	.delay			= internal_delay,
 };
-#endif

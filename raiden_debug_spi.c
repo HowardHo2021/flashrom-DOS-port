@@ -441,6 +441,7 @@ struct raiden_debug_spi_data {
 	 */
 	uint16_t max_spi_write_count;
 	uint16_t max_spi_read_count;
+	struct spi_master *spi_config;
 };
 /*
  * USB permits a maximum bulk transfer of 64B.
@@ -1257,6 +1258,37 @@ static int send_command_v2(const struct flashctx *flash,
 	return status;
 }
 
+static int raiden_debug_spi_shutdown(void * data)
+{
+	struct raiden_debug_spi_data *ctx_data = (struct raiden_debug_spi_data *)data;
+	struct spi_master *spi_config = ctx_data->spi_config;
+
+	int ret = LIBUSB(libusb_control_transfer(
+				ctx_data->dev->handle,
+				LIBUSB_ENDPOINT_OUT |
+				LIBUSB_REQUEST_TYPE_VENDOR |
+				LIBUSB_RECIPIENT_INTERFACE,
+				RAIDEN_DEBUG_SPI_REQ_DISABLE,
+				0,
+				ctx_data->dev->interface_descriptor->bInterfaceNumber,
+				NULL,
+				0,
+				TRANSFER_TIMEOUT_MS));
+	if (ret != 0) {
+		msg_perr("Raiden: Failed to disable SPI bridge\n");
+		free(ctx_data);
+		free(spi_config);
+		return ret;
+	}
+
+	usb_device_free(ctx_data->dev);
+	libusb_exit(NULL);
+	free(ctx_data);
+	free(spi_config);
+
+	return 0;
+}
+
 static const struct spi_master spi_master_raiden_debug = {
 	.features       = SPI_MASTER_4BA,
 	.max_data_read  = 0,
@@ -1266,6 +1298,7 @@ static const struct spi_master spi_master_raiden_debug = {
 	.read           = default_spi_read,
 	.write_256      = default_spi_write_256,
 	.write_aai      = default_spi_write_aai,
+	.shutdown	= raiden_debug_spi_shutdown,
 };
 
 static int match_endpoint(struct libusb_endpoint_descriptor const *descriptor,
@@ -1316,15 +1349,14 @@ static int find_endpoints(struct usb_device *dev, uint8_t *in_ep, uint8_t *out_e
  * is being used by the device USB SPI interface and if needed query the
  * device for its capabilities.
  *
- * @param spi_config    Raiden SPI config which will be modified.
+ * @param ctx_data Raiden SPI data, data contains pointer to config which will be modified.
  *
- * @returns             Returns status code with 0 on success.
+ * @returns	   Returns status code with 0 on success.
  */
-static int configure_protocol(struct spi_master *spi_config)
+static int configure_protocol(struct raiden_debug_spi_data *ctx_data)
 {
 	int status = 0;
-	struct raiden_debug_spi_data *ctx_data =
-		(struct raiden_debug_spi_data *)spi_config->data;
+	struct spi_master *spi_config = ctx_data->spi_config;
 
 	ctx_data->protocol_version =
 		ctx_data->dev->interface_descriptor->bInterfaceProtocol;
@@ -1371,38 +1403,6 @@ static int configure_protocol(struct spi_master *spi_config)
 		JEDEC_BYTE_PROGRAM_OUTSIZE;
 	spi_config->max_data_read = ctx_data->max_spi_read_count -
 		JEDEC_BYTE_PROGRAM_OUTSIZE;
-
-	return 0;
-}
-
-static int raiden_debug_spi_shutdown(void * data)
-{
-	struct spi_master *spi_config = data;
-	struct raiden_debug_spi_data *ctx_data =
-		(struct raiden_debug_spi_data *)spi_config->data;
-
-	int ret = LIBUSB(libusb_control_transfer(
-				ctx_data->dev->handle,
-				LIBUSB_ENDPOINT_OUT |
-				LIBUSB_REQUEST_TYPE_VENDOR |
-				LIBUSB_RECIPIENT_INTERFACE,
-				RAIDEN_DEBUG_SPI_REQ_DISABLE,
-				0,
-				ctx_data->dev->interface_descriptor->bInterfaceNumber,
-				NULL,
-				0,
-				TRANSFER_TIMEOUT_MS));
-	if (ret != 0) {
-		msg_perr("Raiden: Failed to disable SPI bridge\n");
-		free(ctx_data);
-		free(spi_config);
-		return ret;
-	}
-
-	usb_device_free(ctx_data->dev);
-	libusb_exit(NULL);
-	free(ctx_data);
-	free(spi_config);
 
 	return 0;
 }
@@ -1594,14 +1594,14 @@ loop_end:
 	data->dev = device;
 	data->in_ep = in_endpoint;
 	data->out_ep = out_endpoint;
+	data->spi_config = spi_config;
 
-	spi_config->data = data; /* data is needed to configure protocol below */
 	/*
 	 * The SPI master needs to be configured based on the device connected.
 	 * Using the device protocol interrogation, we will set the limits on
 	 * the write and read sizes and switch command functions.
 	 */
-	ret = configure_protocol(spi_config);
+	ret = configure_protocol(data);
 	if (ret) {
 		msg_perr("Raiden: Error configuring protocol\n"
 			 "    protocol       = %u\n"
@@ -1612,10 +1612,7 @@ loop_end:
 		return SPI_GENERIC_ERROR;
 	}
 
-	register_spi_master(spi_config, data);
-	register_shutdown(raiden_debug_spi_shutdown, spi_config);
-
-	return 0;
+	return register_spi_master(spi_config, data);
 }
 
 const struct programmer_entry programmer_raiden_debug_spi = {
