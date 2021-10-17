@@ -29,6 +29,37 @@ add_project_arguments('-D_POSIX_C_SOURCE=200809L', language : 'c') # required fo
 add_project_arguments('-D_BSD_SOURCE', language : 'c') # required for glibc < v2.19
 add_project_arguments('-DFLASHROM_VERSION="' + meson.project_version() + '"', language : 'c')
 
+if host_machine.endian() == 'little'
+  add_project_arguments('-D__FLASHROM_LITTLE_ENDIAN__=1', language : 'c')
+endif
+if host_machine.endian() == 'big'
+  add_project_arguments('-D__FLASHROM_BIG_ENDIAN__=1', language : 'c')
+endif
+
+if host_machine.system() in ['cygwin', 'windows']
+  add_project_arguments('-DIS_WINDOWS=1', language : 'c')
+else
+  add_project_arguments('-DIS_WINDOWS=0', language : 'c')
+endif
+
+if host_machine.system() in ['linux', 'darwin', 'netbsd', 'openbsd']
+  add_project_arguments('-DUSE_IOPL=1', language : 'c')
+else
+  add_project_arguments('-DUSE_IOPL=0', language : 'c')
+endif
+
+if host_machine.system() in ['freebsd', 'dragonfly']
+  add_project_arguments('-DUSE_DEV_IO=1', language : 'c')
+else
+  add_project_arguments('-DUSE_DEV_IO=0', language : 'c')
+endif
+
+if host_machine.system() in ['gnu']
+  add_project_arguments('-DUSE_IOPERM=1', language : 'c')
+else
+  add_project_arguments('-DUSE_IOPERM=0', language : 'c')
+endif
+
 # get defaults from configure
 config_atahpt = get_option('config_atahpt')
 config_atapromise = get_option('config_atapromise')

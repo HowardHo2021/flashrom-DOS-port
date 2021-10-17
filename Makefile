@@ -29,6 +29,7 @@ PROGRAM = flashrom
 # Note for anyone editing this Makefile: gnumake will happily ignore any
 # changes in this Makefile to variables set on the command line.
 STRIP   ?= strip
+STRIP_ARGS = -s
 INSTALL = install
 DIFF    = diff
 PREFIX  ?= /usr/local
@@ -158,40 +159,27 @@ ifeq ($(findstring MINGW, $(HOST_OS)), MINGW)
 CC = gcc
 endif
 
-ifneq ($(HOST_OS), SunOS)
-STRIP_ARGS = -s
-endif
+# Determine the destination OS, architecture and endian
+# IMPORTANT: The following lines must be placed before TARGET_OS, ARCH or ENDIAN
+# is ever used (of course), but should come after any lines setting CC because
+# the lines below use CC itself.
+override TARGET_OS := $(call c_macro_test, Makefile.d/os_test.h)
+override ARCH      := $(call c_macro_test, Makefile.d/arch_test.h)
+override ENDIAN    := $(call c_macro_test, Makefile.d/endian_test.h)
 
-# Determine the destination OS.
-# IMPORTANT: The following line must be placed before TARGET_OS is ever used
-# (of course), but should come after any lines setting CC because the line
-# below uses CC itself.
-override TARGET_OS := $(strip $(call debug_shell,$(CC) $(CPPFLAGS) -E os.h 2>/dev/null \
-    | tail -1 | cut -f 2 -d'"'))
+ifeq ($(TARGET_OS), $(filter $(TARGET_OS), FreeBSD OpenBSD DragonFlyBSD))
+override CPPFLAGS += -I/usr/local/include
+override LDFLAGS += -L/usr/local/lib
+endif
 
 ifeq ($(TARGET_OS), Darwin)
 override CPPFLAGS += -I/opt/local/include -I/usr/local/include
 override LDFLAGS += -L/opt/local/lib -L/usr/local/lib
 endif
 
-ifeq ($(TARGET_OS), FreeBSD)
-override CPPFLAGS += -I/usr/local/include
-override LDFLAGS += -L/usr/local/lib
-endif
-
-ifeq ($(TARGET_OS), OpenBSD)
-override CPPFLAGS += -I/usr/local/include
-override LDFLAGS += -L/usr/local/lib
-endif
-
 ifeq ($(TARGET_OS), NetBSD)
 override CPPFLAGS += -I/usr/pkg/include
 override LDFLAGS += -L/usr/pkg/lib
-endif
-
-ifeq ($(TARGET_OS), DragonFlyBSD)
-override CPPFLAGS += -I/usr/local/include
-override LDFLAGS += -L/usr/local/lib
 endif
 
 ifeq ($(TARGET_OS), DOS)
@@ -203,6 +191,12 @@ LIBS += -lgetopt
 $(call mark_unsupported,$(DEPENDS_ON_SERIAL))
 # Libraries not available for DOS
 $(call mark_unsupported,$(DEPENDS_ON_LIBUSB1) $(DEPENDS_ON_LIBFTDI) $(DEPENDS_ON_LIBJAYLINK))
+endif
+
+ifeq ($(TARGET_OS), $(filter $(TARGET_OS), MinGW Cygwin))
+FEATURE_CFLAGS += -D'IS_WINDOWS=1'
+else
+FEATURE_CFLAGS += -D'IS_WINDOWS=0'
 endif
 
 # FIXME: Should we check for Cygwin/MSVC as well?
@@ -256,22 +250,16 @@ ifeq ($(TARGET_OS), Linux)
 CONFIG_LINUX_I2C_HELPER = yes
 endif
 
-###############################################################################
-# General architecture-specific settings.
-# Like above for the OS, below we verify user-supplied options depending on the target architecture.
-
-# Determine the destination processor architecture.
-# IMPORTANT: The following line must be placed before ARCH is ever used
-# (of course), but should come after any lines setting CC because the line
-# below uses CC itself.
-override ARCH := $(strip $(call debug_shell,$(CC) $(CPPFLAGS) -E archtest.c 2>/dev/null \
-    | tail -1 | cut -f 2 -d'"'))
-override ENDIAN := $(strip $(call debug_shell,$(CC) $(CPPFLAGS) -E endiantest.c 2>/dev/null \
-    | tail -1))
-
 # Disable the internal programmer on unsupported architectures (everything but x86 and mipsel)
 ifneq ($(ARCH)-little, $(filter $(ARCH),x86 mips)-$(ENDIAN))
 $(call mark_unsupported,CONFIG_INTERNAL)
+endif
+
+ifeq ($(ENDIAN), little)
+FEATURE_CFLAGS += -D'__FLASHROM_LITTLE_ENDIAN__=1'
+endif
+ifeq ($(ENDIAN), big)
+FEATURE_CFLAGS += -D'__FLASHROM_BIG_ENDIAN__=1'
 endif
 
 # PCI port I/O support is unimplemented on PPC/MIPS/SPARC and unavailable on ARM.
@@ -290,6 +278,25 @@ $(call mark_unsupported,CONFIG_GFXNVIDIA CONFIG_SATASII CONFIG_ATAVIA)
 $(call mark_unsupported,CONFIG_DRKAISER CONFIG_NICINTEL CONFIG_NICINTEL_SPI)
 $(call mark_unsupported,CONFIG_NICINTEL_EEPROM CONFIG_OGP_SPI CONFIG_IT8212)
 endif
+
+ifeq ($(TARGET_OS), $(filter $(TARGET_OS), Linux Darwin NetBSD OpenBSD))
+FEATURE_CFLAGS += -D'USE_IOPL=1'
+else
+FEATURE_CFLAGS += -D'USE_IOPL=0'
+endif
+
+ifeq ($(TARGET_OS), $(filter $(TARGET_OS), FreeBSD FreeBSD-glibc DragonFlyBSD))
+FEATURE_CFLAGS += -D'USE_DEV_IO=1'
+else
+FEATURE_CFLAGS += -D'USE_DEV_IO=0'
+endif
+
+ifeq ($(TARGET_OS), $(filter $(TARGET_OS), Hurd))
+FEATURE_CFLAGS += -D'USE_IOPERM=1'
+else
+FEATURE_CFLAGS += -D'USE_IOPERM=0'
+endif
+
 
 ###############################################################################
 # Flash chip drivers and bus support infrastructure.
@@ -870,7 +877,7 @@ TAROPTIONS = $(shell LC_ALL=C tar --version|grep -q GNU && echo "--owner=root --
 # This includes all frontends and libflashrom.
 # We don't use EXEC_SUFFIX here because we want to clean everything.
 clean:
-	rm -f $(PROGRAM) $(PROGRAM).exe libflashrom.a *.o *.d $(PROGRAM).8 $(PROGRAM).8.html $(BUILD_DETAILS_FILE)
+	rm -f $(PROGRAM) $(PROGRAM).exe libflashrom.a $(filter-out Makefile.d, $(wildcard *.d *.o)) $(PROGRAM).8 $(PROGRAM).8.html $(BUILD_DETAILS_FILE)
 	@+$(MAKE) -C util/ich_descriptors_tool/ clean
 
 distclean: clean
@@ -890,16 +897,12 @@ compiler: featuresavailable
 		echo "found." || { echo "not found."; \
 		rm -f .test.c .test$(EXEC_SUFFIX); exit 1; }; } 2>>$(BUILD_DETAILS_FILE); echo $? >&3 ; } | tee -a $(BUILD_DETAILS_FILE) >&4; } 3>&1;} | { read rc ; exit ${rc}; } } 4>&1
 	@rm -f .test.c .test$(EXEC_SUFFIX)
-	@printf "Target arch is "
-	@# FreeBSD wc will output extraneous whitespace.
-	@echo $(ARCH)|wc -w|grep -q '^[[:blank:]]*1[[:blank:]]*$$' ||	\
-		( echo "unknown (\"$(ARCH)\"). Aborting."; exit 1)
-	@printf "%s\n" '$(ARCH)'
-	@printf "Target OS is "
-	@# FreeBSD wc will output extraneous whitespace.
-	@echo $(TARGET_OS)|wc -w|grep -q '^[[:blank:]]*1[[:blank:]]*$$' ||	\
-		( echo "unknown (\"$(TARGET_OS)\"). Aborting."; exit 1)
-	@printf "%s\n" '$(TARGET_OS)'
+	@echo Target arch is $(ARCH)
+	@if [ $(ARCH) = unknown ]; then echo Aborting.; exit 1; fi
+	@echo Target OS is $(TARGET_OS)
+	@if [ $(TARGET_OS) = unknown ]; then echo Aborting.; exit 1; fi
+	@echo Target endian is $(ENDIAN)
+	@if [ $(ENDIAN) = unknown ]; then echo Aborting.; exit 1; fi
 ifeq ($(TARGET_OS), libpayload)
 	@$(CC) --version 2>&1 | grep -q coreboot || \
 		( echo "Warning: It seems you are not using coreboot's reference compiler."; \
