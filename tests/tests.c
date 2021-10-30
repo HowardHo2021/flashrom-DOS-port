@@ -21,15 +21,9 @@
 #include <string.h>
 #include <stdint.h>
 
-/* redefinitions/wrapping */
-#define LOG_ME printf("%s is called\n", __func__)
-#define MOCK_HANDLE 2021
-
-static const struct io_mock *current_io = NULL;
-
-void io_mock_register(const struct io_mock *io)
+void *not_null(void)
 {
-	current_io = io;
+	return (void *)NON_ZERO;
 }
 
 /* Workaround for https://github.com/clibs/cmocka/issues/17 */
@@ -54,7 +48,7 @@ void *__wrap_physmap(const char *descr, uintptr_t phys_addr, size_t len)
 }
 
 struct pci_dev mock_pci_dev = {
-	.device_id = MOCK_HANDLE,
+	.device_id = NON_ZERO,
 };
 
 struct pci_dev *__wrap_pcidev_init(void *devs, int bar)
@@ -66,7 +60,7 @@ struct pci_dev *__wrap_pcidev_init(void *devs, int bar)
 uintptr_t __wrap_pcidev_readbar(void *dev, int bar)
 {
 	LOG_ME;
-	return MOCK_HANDLE;
+	return NON_ZERO;
 }
 
 void __wrap_sio_write(uint16_t port, uint8_t reg, uint8_t data)
@@ -83,63 +77,63 @@ uint8_t __wrap_sio_read(uint16_t port, uint8_t reg)
 int __wrap_open(const char *pathname, int flags)
 {
 	LOG_ME;
-	if (current_io && current_io->open)
-		return current_io->open(current_io->state, pathname, flags);
-	return MOCK_HANDLE;
+	if (get_io() && get_io()->open)
+		return get_io()->open(get_io()->state, pathname, flags);
+	return NON_ZERO;
 }
 
 int __wrap_open64(const char *pathname, int flags)
 {
 	LOG_ME;
-	if (current_io && current_io->open)
-		return current_io->open(current_io->state, pathname, flags);
-	return MOCK_HANDLE;
+	if (get_io() && get_io()->open)
+		return get_io()->open(get_io()->state, pathname, flags);
+	return NON_ZERO;
 }
 
 int __wrap_ioctl(int fd, unsigned long int request, ...)
 {
 	LOG_ME;
-	if (current_io && current_io->ioctl) {
+	if (get_io() && get_io()->ioctl) {
 		va_list args;
 		int out;
 		va_start(args, request);
-		out = current_io->ioctl(current_io->state, fd, request, args);
+		out = get_io()->ioctl(get_io()->state, fd, request, args);
 		va_end(args);
 		return out;
 	}
-	return MOCK_HANDLE;
+	return 0;
 }
 
 int __wrap_write(int fd, const void *buf, size_t sz)
 {
 	LOG_ME;
-	if (current_io && current_io->write)
-		return current_io->write(current_io->state, fd, buf, sz);
+	if (get_io() && get_io()->write)
+		return get_io()->write(get_io()->state, fd, buf, sz);
 	return sz;
 }
 
 int __wrap_read(int fd, void *buf, size_t sz)
 {
 	LOG_ME;
-	if (current_io && current_io->read)
-		return current_io->read(current_io->state, fd, buf, sz);
+	if (get_io() && get_io()->read)
+		return get_io()->read(get_io()->state, fd, buf, sz);
 	return sz;
 }
 
 FILE *__wrap_fopen(const char *pathname, const char *mode)
 {
 	LOG_ME;
-	if (current_io && current_io->fopen)
-		return current_io->fopen(current_io->state, pathname, mode);
-	return (void *)MOCK_HANDLE;
+	if (get_io() && get_io()->fopen)
+		return get_io()->fopen(get_io()->state, pathname, mode);
+	return not_null();
 }
 
 FILE *__wrap_fopen64(const char *pathname, const char *mode)
 {
 	LOG_ME;
-	if (current_io && current_io->fopen)
-		return current_io->fopen(current_io->state, pathname, mode);
-	return (void *)MOCK_HANDLE;
+	if (get_io() && get_io()->fopen)
+		return get_io()->fopen(get_io()->state, pathname, mode);
+	return not_null();
 }
 
 int __wrap_stat(const char *path, void *buf)
@@ -169,17 +163,17 @@ int __wrap_fstat64(int fd, void *buf)
 char *__wrap_fgets(char *buf, int len, FILE *fp)
 {
 	LOG_ME;
-	if (current_io && current_io->fgets)
-		return current_io->fgets(current_io->state, buf, len, fp);
+	if (get_io() && get_io()->fgets)
+		return get_io()->fgets(get_io()->state, buf, len, fp);
 	return NULL;
 }
 
-size_t __wrap_fread(void *ptr, size_t size, size_t len, FILE *fp)
+size_t __wrap_fread(void *ptr, size_t size, size_t nmemb, FILE *fp)
 {
 	LOG_ME;
-	if (current_io && current_io->fread)
-		return current_io->fread(current_io->state, ptr, size, len, fp);
-	return 0;
+	if (get_io() && get_io()->fread)
+		return get_io()->fread(get_io()->state, ptr, size, nmemb, fp);
+	return nmemb;
 }
 
 size_t __wrap_fwrite(const void *ptr, size_t size, size_t nmemb, FILE *fp)
@@ -197,7 +191,7 @@ int __wrap_fflush(FILE *fp)
 int __wrap_fileno(FILE *fp)
 {
 	LOG_ME;
-	return MOCK_HANDLE;
+	return NON_ZERO;
 }
 
 int __wrap_fsync(int fd)
@@ -215,8 +209,8 @@ int __wrap_setvbuf(FILE *fp, char *buf, int type, size_t size)
 int __wrap_fclose(FILE *fp)
 {
 	LOG_ME;
-	if (current_io && current_io->fclose)
-		return current_io->fclose(current_io->state, fp);
+	if (get_io() && get_io()->fclose)
+		return get_io()->fclose(get_io()->state, fp);
 	return 0;
 }
 
@@ -246,92 +240,46 @@ int __wrap_rget_io_perms(void)
 void __wrap_test_outb(unsigned char value, unsigned short port)
 {
 	/* LOG_ME; */
-	if (current_io && current_io->outb)
-		current_io->outb(current_io->state, value, port);
+	if (get_io() && get_io()->outb)
+		get_io()->outb(get_io()->state, value, port);
 }
 
 unsigned char __wrap_test_inb(unsigned short port)
 {
 	/* LOG_ME; */
-	if (current_io && current_io->inb)
-		return current_io->inb(current_io->state, port);
+	if (get_io() && get_io()->inb)
+		return get_io()->inb(get_io()->state, port);
 	return 0;
 }
 
 void __wrap_test_outw(unsigned short value, unsigned short port)
 {
 	/* LOG_ME; */
-	if (current_io && current_io->outw)
-		current_io->outw(current_io->state, value, port);
+	if (get_io() && get_io()->outw)
+		get_io()->outw(get_io()->state, value, port);
 }
 
 unsigned short __wrap_test_inw(unsigned short port)
 {
 	/* LOG_ME; */
-	if (current_io && current_io->inw)
-		return current_io->inw(current_io->state, port);
+	if (get_io() && get_io()->inw)
+		return get_io()->inw(get_io()->state, port);
 	return 0;
 }
 
 void __wrap_test_outl(unsigned int value, unsigned short port)
 {
 	/* LOG_ME; */
-	if (current_io && current_io->outl)
-		current_io->outl(current_io->state, value, port);
+	if (get_io() && get_io()->outl)
+		get_io()->outl(get_io()->state, value, port);
 }
 
 unsigned int __wrap_test_inl(unsigned short port)
 {
 	/* LOG_ME; */
-	if (current_io && current_io->inl)
-		return current_io->inl(current_io->state, port);
+	if (get_io() && get_io()->inl)
+		return get_io()->inl(get_io()->state, port);
 	return 0;
-}
-
-void *__wrap_usb_dev_get_by_vid_pid_number(
-		libusb_context *usb_ctx, uint16_t vid, uint16_t pid, unsigned int num)
-{
-	LOG_ME;
-	return (void *)MOCK_HANDLE;
-}
-
-int __wrap_libusb_set_configuration(libusb_device_handle *devh, int config)
-{
-	LOG_ME;
-	return 0;
-}
-
-int __wrap_libusb_claim_interface(libusb_device_handle *devh, int interface_number)
-{
-	LOG_ME;
-	return 0;
-}
-
-int __wrap_libusb_control_transfer(libusb_device_handle *devh, uint8_t bmRequestType,
-		uint8_t bRequest, uint16_t wValue, uint16_t wIndex, unsigned char *data,
-		uint16_t wLength, unsigned int timeout)
-{
-	LOG_ME;
-	if (current_io && current_io->libusb_control_transfer)
-		return current_io->libusb_control_transfer(current_io->state,
-				devh, bmRequestType, bRequest, wValue, wIndex, data, wLength, timeout);
-	return 0;
-}
-
-int __wrap_libusb_release_interface(libusb_device_handle *devh, int interface_number)
-{
-	LOG_ME;
-	return 0;
-}
-
-void __wrap_libusb_close(libusb_device_handle *devh)
-{
-	LOG_ME;
-}
-
-void __wrap_libusb_exit(libusb_context *ctx)
-{
-	LOG_ME;
 }
 
 int main(void)

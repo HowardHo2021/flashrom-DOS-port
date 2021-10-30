@@ -70,6 +70,7 @@ struct io_mock {
 	unsigned int (*inl)(void *state, unsigned short port);
 
 	/* USB I/O */
+	int (*libusb_init)(void *state, libusb_context **ctx);
 	int (*libusb_control_transfer)(void *state,
 					libusb_device_handle *devh,
 					uint8_t bmRequestType,
@@ -94,5 +95,7 @@ struct io_mock {
 };
 
 void io_mock_register(const struct io_mock *io);
+
+const struct io_mock *get_io(void);
 
 #endif

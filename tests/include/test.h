@@ -27,4 +27,14 @@
 #include <setjmp.h>
 #include <cmocka.h>
 
+#define NON_ZERO (0xf000baaa)
+
+/*
+ * Having this as function allows to set a breakpoint on the address,
+ * as it has a named symbol associated with the address number.
+ */
+void *not_null(void);
+
+#define LOG_ME printf("%s is called\n", __func__)
+
 #endif /* _TESTS_TEST_H */

@@ -19,8 +19,6 @@
 #include "io_mock.h"
 #include "programmer.h"
 
-#define NOT_NULL ((void *)0xf000baaa)
-
 static void run_lifecycle(void **state, const struct programmer_entry *prog, const char *param)
 {
 	(void) state; /* unused */
@@ -56,6 +54,13 @@ void nicrealtek_init_and_shutdown_test_success(void **state)
 #endif
 }
 
+
+int dediprog_libusb_init(void *state, libusb_context **ctx)
+{
+	*ctx = not_null();
+	return 0;
+}
+
 int dediprog_libusb_control_transfer(void *state,
 					libusb_device_handle *devh,
 					uint8_t bmRequestType,
@@ -77,6 +82,7 @@ void dediprog_init_and_shutdown_test_success(void **state)
 {
 #if CONFIG_DEDIPROG == 1
 	const struct io_mock dediprog_io = {
+		.libusb_init = dediprog_libusb_init,
 		.libusb_control_transfer = dediprog_libusb_control_transfer,
 	};
 
@@ -100,7 +106,7 @@ FILE *linux_mtd_fopen(void *state, const char *pathname, const char *mode)
 
 	io_state->fopen_path = strdup(pathname);
 
-	return NOT_NULL;
+	return not_null();
 }
 
 size_t linux_mtd_fread(void *state, void *buf, size_t size, size_t len, FILE *fp)

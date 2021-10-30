@@ -236,7 +236,7 @@ $(call mark_unsupported,$(DEPENDS_ON_LIBUSB1) $(DEPENDS_ON_LIBFTDI) $(DEPENDS_ON
 endif
 
 # Android is handled internally as separate OS, but it supports about the same drivers as Linux.
-ifeq ($(filter $(TARGET_OS),Linux Android), )
+ifneq ($(TARGET_OS), $(filter $(TARGET_OS), Linux Android))
 $(call mark_unsupported,CONFIG_LINUX_MTD CONFIG_LINUX_SPI)
 $(call mark_unsupported,CONFIG_MSTARDDC_SPI CONFIG_LSPCON_I2C_SPI CONFIG_REALTEK_MST_I2C_SPI)
 endif
@@ -251,7 +251,7 @@ CONFIG_LINUX_I2C_HELPER = yes
 endif
 
 # Disable the internal programmer on unsupported architectures (everything but x86 and mipsel)
-ifneq ($(ARCH)-little, $(filter $(ARCH),x86 mips)-$(ENDIAN))
+ifneq ($(ARCH)-little, $(filter $(ARCH), x86 mips)-$(ENDIAN))
 $(call mark_unsupported,CONFIG_INTERNAL)
 endif
 
@@ -273,7 +273,7 @@ endif
 # Additionally disable all drivers needing raw access (memory, PCI, port I/O)
 # on architectures with unknown raw access properties.
 # Right now those architectures are alpha hppa m68k sh s390
-ifneq ($(ARCH),$(filter $(ARCH),x86 mips ppc arm sparc arc))
+ifneq ($(ARCH), $(filter $(ARCH), x86 mips ppc arm sparc arc))
 $(call mark_unsupported,CONFIG_GFXNVIDIA CONFIG_SATASII CONFIG_ATAVIA)
 $(call mark_unsupported,CONFIG_DRKAISER CONFIG_NICINTEL CONFIG_NICINTEL_SPI)
 $(call mark_unsupported,CONFIG_NICINTEL_EEPROM CONFIG_OGP_SPI CONFIG_IT8212)
@@ -739,7 +739,6 @@ endif
 
 ifeq ($(CONFIG_LINUX_I2C_HELPER), yes)
 LIB_OBJS += i2c_helper_linux.o
-FEATURE_CFLAGS += -D'CONFIG_I2C_SUPPORT=1'
 endif
 
 ifneq ($(NEED_SERIAL), )
@@ -803,10 +802,9 @@ endif
 NEED_LIBUSB1 := $(call filter_deps,$(DEPENDS_ON_LIBUSB1))
 ifneq ($(NEED_LIBUSB1), )
 CHECK_LIBUSB1 = yes
-FEATURE_CFLAGS += -D'NEED_LIBUSB1=1'
 PROGRAMMER_OBJS += usbdev.o usb_device.o
 # FreeBSD and DragonflyBSD use a reimplementation of libusb-1.0 that is simply called libusb
-ifeq ($(TARGET_OS),$(filter $(TARGET_OS),FreeBSD DragonFlyBSD))
+ifeq ($(TARGET_OS), $(filter $(TARGET_OS), FreeBSD DragonFlyBSD))
 USB1LIBS += -lusb
 else
 ifeq ($(TARGET_OS),NetBSD)
@@ -855,7 +853,7 @@ OBJS = $(CLI_OBJS) $(LIBFLASHROM_OBJS)
 
 all: hwlibs features $(PROGRAM)$(EXEC_SUFFIX) $(PROGRAM).8
 ifeq ($(ARCH), x86)
-	@+$(MAKE) -C util/ich_descriptors_tool/ TARGET_OS=$(TARGET_OS) EXEC_SUFFIX=$(EXEC_SUFFIX)
+	@+$(MAKE) -C util/ich_descriptors_tool/ HOST_OS=$(HOST_OS) TARGET_OS=$(TARGET_OS)
 endif
 
 $(PROGRAM)$(EXEC_SUFFIX): $(OBJS)

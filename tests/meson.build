@@ -14,7 +14,9 @@
 root_includes = include_directories('../subprojects')
 
 srcs = [
+  'io_mock.c',
   'tests.c',
+  'libusb_wraps.c',
   'helpers.c',
   'flashrom.c',
   'spi25.c',
@@ -62,6 +64,7 @@ mocks = [
   '-Wl,--wrap=test_outl',
   '-Wl,--wrap=test_inl',
   '-Wl,--wrap=usb_dev_get_by_vid_pid_number',
+  '-Wl,--wrap=libusb_init',
   '-Wl,--wrap=libusb_set_configuration',
   '-Wl,--wrap=libusb_claim_interface',
   '-Wl,--wrap=libusb_control_transfer',
