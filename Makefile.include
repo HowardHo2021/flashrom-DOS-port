@@ -130,69 +130,6 @@ enum ftdi_chip_type type = TYPE_232H;
 endef
 export FTDI_232H_TEST
 
-define UTSNAME_TEST
-#include <sys/utsname.h>
-struct utsname osinfo;
-int main(int argc, char **argv)
-{
-	(void) argc;
-	(void) argv;
-	uname (&osinfo);
-	return 0;
-}
-endef
-export UTSNAME_TEST
-
-define LINUX_MTD_TEST
-#include <mtd/mtd-user.h>
-
-int main(int argc, char **argv)
-{
-	(void) argc;
-	(void) argv;
-	return 0;
-}
-endef
-export LINUX_MTD_TEST
-
-define LINUX_SPI_TEST
-#include <linux/types.h>
-#include <linux/spi/spidev.h>
-
-int main(int argc, char **argv)
-{
-	(void) argc;
-	(void) argv;
-	return 0;
-}
-endef
-export LINUX_SPI_TEST
-
-define LINUX_I2C_TEST
-#include <linux/i2c-dev.h>
-#include <linux/i2c.h>
-
-int main(int argc, char **argv)
-{
-	(void) argc;
-	(void) argv;
-	return 0;
-}
-endef
-export LINUX_I2C_TEST
-
-define CLOCK_GETTIME_TEST
-#include <time.h>
-
-int main(int argc, char **argv)
-{
-	struct timespec res;
-	clock_gettime(CLOCK_REALTIME, &res);
-	return 0;
-}
-endef
-export CLOCK_GETTIME_TEST
-
 define NI845X_TEST
 #include <ni845x.h>
 

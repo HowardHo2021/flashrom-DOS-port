@@ -169,6 +169,12 @@ override TARGET_OS := $(call c_macro_test, Makefile.d/os_test.h)
 override ARCH      := $(call c_macro_test, Makefile.d/arch_test.h)
 override ENDIAN    := $(call c_macro_test, Makefile.d/endian_test.h)
 
+HAS_UTSNAME        := $(call c_compile_test, Makefile.d/utsname_test.c)
+HAS_CLOCK_GETTIME  := $(call c_compile_test, Makefile.d/clock_gettime_test.c)
+HAS_LINUX_MTD      := $(call c_compile_test, Makefile.d/linux_mtd_test.c)
+HAS_LINUX_SPI      := $(call c_compile_test, Makefile.d/linux_spi_test.c)
+HAS_LINUX_I2C      := $(call c_compile_test, Makefile.d/linux_i2c_test.c)
+
 ifeq ($(TARGET_OS), $(filter $(TARGET_OS), FreeBSD OpenBSD DragonFlyBSD))
 override CPPFLAGS += -I/usr/local/include
 override LDFLAGS += -L/usr/local/lib
@@ -237,19 +243,21 @@ $(call mark_unsupported,CONFIG_BUSPIRATE_SPI CONFIG_SERPROG CONFIG_PONY_SPI)
 $(call mark_unsupported,$(DEPENDS_ON_LIBUSB1) $(DEPENDS_ON_LIBFTDI) $(DEPENDS_ON_LIBJAYLINK))
 endif
 
-# Android is handled internally as separate OS, but it supports about the same drivers as Linux.
-ifneq ($(TARGET_OS), $(filter $(TARGET_OS), Linux Android))
-$(call mark_unsupported,CONFIG_LINUX_MTD CONFIG_LINUX_SPI)
+ifeq ($(HAS_LINUX_MTD), no)
+$(call mark_unsupported,CONFIG_LINUX_MTD)
+endif
+
+ifeq ($(HAS_LINUX_SPI), no)
+$(call mark_unsupported,CONFIG_LINUX_SPI)
+endif
+
+ifeq ($(HAS_LINUX_I2C), no)
 $(call mark_unsupported,CONFIG_MSTARDDC_SPI CONFIG_LSPCON_I2C_SPI CONFIG_REALTEK_MST_I2C_SPI)
 endif
 
 ifeq ($(TARGET_OS), Android)
 # Android on x86 (currently) does not provide raw PCI port I/O operations.
 $(call mark_unsupported,CONFIG_RAYER_SPI)
-endif
-
-ifeq ($(TARGET_OS), Linux)
-CONFIG_LINUX_I2C_HELPER = yes
 endif
 
 # Disable the internal programmer on unsupported architectures (everything but x86 and mipsel)
@@ -585,13 +593,13 @@ endif
 
 ifeq ($(CONFIG_FT2232_SPI), yes)
 # This is a totally ugly hack.
-FEATURE_CFLAGS += $(call debug_shell,grep -q "FTDISUPPORT := yes" .features && printf "%s" "-D'CONFIG_FT2232_SPI=1'")
+FEATURE_CFLAGS += $(call debug_shell,grep -q "FTDISUPPORT := yes" .libdeps && printf "%s" "-D'CONFIG_FT2232_SPI=1'")
 PROGRAMMER_OBJS += ft2232_spi.o
 endif
 
 ifeq ($(CONFIG_USBBLASTER_SPI), yes)
 # This is a totally ugly hack.
-FEATURE_CFLAGS += $(call debug_shell,grep -q "FTDISUPPORT := yes" .features && printf "%s" "-D'CONFIG_USBBLASTER_SPI=1'")
+FEATURE_CFLAGS += $(call debug_shell,grep -q "FTDISUPPORT := yes" .libdeps && printf "%s" "-D'CONFIG_USBBLASTER_SPI=1'")
 PROGRAMMER_OBJS += usbblaster_spi.o
 endif
 
@@ -677,21 +685,17 @@ PROGRAMMER_OBJS += satamv.o
 endif
 
 ifeq ($(CONFIG_LINUX_MTD), yes)
-# This is a totally ugly hack.
-FEATURE_CFLAGS += $(call debug_shell,grep -q "LINUX_MTD_SUPPORT := yes" .features && printf "%s" "-D'CONFIG_LINUX_MTD=1'")
+FEATURE_CFLAGS += -D'CONFIG_LINUX_MTD=1'
 PROGRAMMER_OBJS += linux_mtd.o
 endif
 
 ifeq ($(CONFIG_LINUX_SPI), yes)
-# This is a totally ugly hack.
-FEATURE_CFLAGS += $(call debug_shell,grep -q "LINUX_SPI_SUPPORT := yes" .features && printf "%s" "-D'CONFIG_LINUX_SPI=1'")
+FEATURE_CFLAGS += -D'CONFIG_LINUX_SPI=1'
 PROGRAMMER_OBJS += linux_spi.o
 endif
 
 ifeq ($(CONFIG_MSTARDDC_SPI), yes)
-# This is a totally ugly hack.
-FEATURE_CFLAGS += $(call debug_shell,grep -q "LINUX_I2C_SUPPORT := yes" .features && printf "%s" "-D'CONFIG_MSTARDDC_SPI=1'")
-NEED_LINUX_I2C += CONFIG_MSTARDDC_SPI
+FEATURE_CFLAGS += -D'CONFIG_MSTARDDC_SPI=1'
 PROGRAMMER_OBJS += mstarddc_spi.o
 endif
 
@@ -739,7 +743,7 @@ LIBS += -lni845x
 PROGRAMMER_OBJS += ni845x_spi.o
 endif
 
-ifeq ($(CONFIG_LINUX_I2C_HELPER), yes)
+ifeq ($(HAS_LINUX_I2C), yes)
 LIB_OBJS += i2c_helper_linux.o
 endif
 
@@ -822,10 +826,10 @@ endif
 NEED_LIBFTDI := $(call filter_deps,$(DEPENDS_ON_LIBFTDI))
 ifneq ($(NEED_LIBFTDI), )
 FTDILIBS := $(call debug_shell,[ -n "$(PKG_CONFIG_LIBDIR)" ] && export PKG_CONFIG_LIBDIR="$(PKG_CONFIG_LIBDIR)" ; $(PKG_CONFIG) --libs libftdi1 || $(PKG_CONFIG) --libs libftdi || printf "%s" "-lftdi -lusb")
-FEATURE_CFLAGS += $(call debug_shell,grep -q "FT232H := yes" .features && printf "%s" "-D'HAVE_FT232H=1'")
+FEATURE_CFLAGS += $(call debug_shell,grep -q "FT232H := yes" .libdeps && printf "%s" "-D'HAVE_FT232H=1'")
 FTDI_INCLUDES := $(call debug_shell,[ -n "$(PKG_CONFIG_LIBDIR)" ] && export PKG_CONFIG_LIBDIR="$(PKG_CONFIG_LIBDIR)" ; $(PKG_CONFIG) --cflags-only-I libftdi1)
 FEATURE_CFLAGS += $(FTDI_INCLUDES)
-FEATURE_LIBS += $(call debug_shell,grep -q "FTDISUPPORT := yes" .features && printf "%s" "$(FTDILIBS)")
+FEATURE_LIBS += $(call debug_shell,grep -q "FTDISUPPORT := yes" .libdeps && printf "%s" "$(FTDILIBS)")
 # We can't set NEED_LIBUSB1 here because that would transform libftdi auto-enabling
 # into a hard requirement for libusb, defeating the purpose of auto-enabling.
 endif
@@ -842,13 +846,17 @@ FEATURE_CFLAGS += -D'CONFIG_PRINT_WIKI=1'
 CLI_OBJS += print_wiki.o
 endif
 
-FEATURE_CFLAGS += $(call debug_shell,grep -q "UTSNAME := yes" .features && printf "%s" "-D'HAVE_UTSNAME=1'")
-
 # We could use PULLED_IN_LIBS, but that would be ugly.
 FEATURE_LIBS += $(call debug_shell,grep -q "NEEDLIBZ := yes" .libdeps && printf "%s" "-lz")
 
-FEATURE_CFLAGS += $(call debug_shell,grep -q "CLOCK_GETTIME := yes" .features && printf "%s" "-D'HAVE_CLOCK_GETTIME=1'")
-FEATURE_LIBS += $(call debug_shell,grep -q "CLOCK_GETTIME := yes" .features && printf "%s" "-lrt")
+ifeq ($(HAS_UTSNAME), yes)
+FEATURE_CFLAGS += -D'HAVE_UTSNAME=1'
+endif
+
+ifeq ($(HAS_CLOCK_GETTIME), yes)
+FEATURE_CFLAGS += -D'HAVE_CLOCK_GETTIME=1'
+FEATURE_LIBS += -lrt
+endif
 
 LIBFLASHROM_OBJS = $(CHIP_OBJS) $(PROGRAMMER_OBJS) $(LIB_OBJS)
 OBJS = $(CLI_OBJS) $(LIBFLASHROM_OBJS)
@@ -870,7 +878,7 @@ libflashrom.a: $(LIBFLASHROM_OBJS)
 # stored files, they can be handled here as well.
 TAROPTIONS = $(shell LC_ALL=C tar --version|grep -q GNU && echo "--owner=root --group=root")
 
-%.o: %.c .features
+%.o: %.c features
 	$(CC) -MMD $(CFLAGS) $(CPPFLAGS) $(FLASHROM_CFLAGS) $(FEATURE_CFLAGS) $(SCMDEF) -o $@ -c $<
 
 # Make sure to add all names of generated binaries here.
@@ -881,7 +889,7 @@ clean:
 	@+$(MAKE) -C util/ich_descriptors_tool/ clean
 
 distclean: clean
-	rm -f .features .libdeps
+	rm -f .libdeps
 
 strip: $(PROGRAM)$(EXEC_SUFFIX)
 	$(STRIP) $(STRIP_ARGS) $(PROGRAM)$(EXEC_SUFFIX)
@@ -894,17 +902,15 @@ compiler: featuresavailable
 	@if [ $(CC_WORKING) = yes ]; \
 		then $(CC) --version 2>/dev/null | head -1; \
 		else echo no; echo Aborting.; exit 1; fi
-	@echo Target arch is $(ARCH)
+	@echo "Target arch: $(ARCH)"
 	@if [ $(ARCH) = unknown ]; then echo Aborting.; exit 1; fi
-	@echo Target OS is $(TARGET_OS)
+	@echo "Target OS: $(TARGET_OS)"
 	@if [ $(TARGET_OS) = unknown ]; then echo Aborting.; exit 1; fi
-	@echo Target endian is $(ENDIAN)
+	@if [ $(TARGET_OS) = libpayload ] && ! $(CC) --version 2>&1 | grep -q coreboot; then \
+		echo "  Warning: It seems you are not using coreboot's reference compiler."; \
+		echo "  This might work but usually does not, please beware."; fi
+	@echo "Target endian: $(ENDIAN)"
 	@if [ $(ENDIAN) = unknown ]; then echo Aborting.; exit 1; fi
-ifeq ($(TARGET_OS), libpayload)
-	@$(CC) --version 2>&1 | grep -q coreboot || \
-		( echo "Warning: It seems you are not using coreboot's reference compiler."; \
-		  echo "This might work but usually does not, please beware." )
-endif
 
 hwlibs: compiler
 	@printf "" > .libdeps
@@ -984,8 +990,38 @@ ifeq ($(CHECK_LIBJAYLINK), yes)
 		rm -f .test.c .test.o .test$(EXEC_SUFFIX); exit 1; }; } 2>>$(BUILD_DETAILS_FILE); echo $? >&3 ; } | tee -a $(BUILD_DETAILS_FILE) >&4; } 3>&1;} | { read rc ; exit ${rc}; } } 4>&1
 	@rm -f .test.c .test.o .test$(EXEC_SUFFIX)
 endif
-
-.features: features
+ifeq ($(CONFIG_NI845X_SPI), yes)
+	@printf "Checking for NI USB-845x installation... " | tee -a $(BUILD_DETAILS_FILE)
+	@echo "$$NI845X_TEST" > .test.c
+	@printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(NI845X_INCLUDES) $(LDFLAGS) .test.c -o .test$(EXEC_SUFFIX) $(NI845X_LIBS) $(LIBS)" >>$(BUILD_DETAILS_FILE)
+	@ { { { { { $(CC) $(CPPFLAGS) $(CFLAGS) $(NI845X_INCLUDES) $(LDFLAGS) .test.c -o .test$(EXEC_SUFFIX) $(NI845X_LIBS) $(LIBS) >&2 && \
+		echo "yes." || { echo "no"; 				\
+		echo "Unable to find NI-845x headers or libraries.";	\
+		echo "Please pass the NI-845x library path to the make with the CONFIG_NI845X_LIBRARY_PATH parameter,"; \
+		echo "or disable the NI-845x support by specifying make CONFIG_NI845X_SPI=no"; \
+		echo "For the NI-845x 17.0 the library path is:"; \
+		echo " On 32 bit systems: C:\Program Files)\National Instruments\NI-845x\MS Visual C"; \
+		echo " On 64 bit systems: C:\Program Files (x86)\National Instruments\NI-845x\MS Visual C"; echo;\
+		rm -f .test.c .test.o; exit 1; }; } 2>>$(BUILD_DETAILS_FILE); echo $? >&3 ; } | tee -a $(BUILD_DETAILS_FILE) >&4; } 3>&1;} | { read rc ; exit ${rc}; } } 4>&1
+	@rm -f .test.c .test.o .test$(EXEC_SUFFIX)
+endif
+ifneq ($(NEED_LIBFTDI), )
+	@printf "Checking for FTDI support... " | tee -a $(BUILD_DETAILS_FILE)
+	@echo "$$FTDI_TEST" > .test.c
+	@printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(FTDI_INCLUDES) $(LDFLAGS) .test.c -o .test$(EXEC_SUFFIX) $(FTDILIBS) $(LIBS)" >>$(BUILD_DETAILS_FILE)
+	@ { $(CC) $(CPPFLAGS) $(CFLAGS) $(FTDI_INCLUDES) $(LDFLAGS) .test.c -o .test$(EXEC_SUFFIX) $(FTDILIBS) $(LIBS) >&2 && \
+	(	echo "found."; echo "FTDISUPPORT := yes" >> .libdeps ; \
+		printf "Checking for FT232H support in libftdi... " ; \
+		echo "$$FTDI_232H_TEST" >> .test.c ; \
+		printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(FTDI_INCLUDES) $(LDFLAGS) .test.c -o .test$(EXEC_SUFFIX) $(FTDILIBS) $(LIBS)" >>$(BUILD_DETAILS_FILE) ; \
+		{ $(CC) $(CPPFLAGS) $(CFLAGS) $(FTDI_INCLUDES) $(LDFLAGS) .test.c -o .test$(EXEC_SUFFIX) $(FTDILIBS) $(LIBS) >&2 && \
+			( echo "found."; echo "FT232H := yes" >> .libdeps ) ||	\
+			( echo "not found."; echo "FT232H := no" >> .libdeps ) } \
+	) || \
+	( echo "not found."; echo "FTDISUPPORT := no" >> .libdeps ) } \
+	2>>$(BUILD_DETAILS_FILE) | tee -a $(BUILD_DETAILS_FILE)
+	@rm -f .test.c .test.o .test$(EXEC_SUFFIX)
+endif
 
 # If a user does not explicitly request a non-working feature, we should
 # silently disable it. However, if a non-working (does not compile) feature
@@ -1001,87 +1037,13 @@ ifneq ($(UNSUPPORTED_FEATURES), )
 	@false
 endif
 
-features: compiler
-	@echo "FEATURES := yes" > .features.tmp
-ifneq ($(NEED_LIBFTDI), )
-	@printf "Checking for FTDI support... " | tee -a $(BUILD_DETAILS_FILE)
-	@echo "$$FTDI_TEST" > .featuretest.c
-	@printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(FTDI_INCLUDES) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) $(FTDILIBS) $(LIBS)" >>$(BUILD_DETAILS_FILE)
-	@ { $(CC) $(CPPFLAGS) $(CFLAGS) $(FTDI_INCLUDES) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) $(FTDILIBS) $(LIBS) >&2 && \
-	(	echo "found."; echo "FTDISUPPORT := yes" >> .features.tmp ; \
-		printf "Checking for FT232H support in libftdi... " ; \
-		echo "$$FTDI_232H_TEST" >> .featuretest.c ; \
-		printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(FTDI_INCLUDES) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) $(FTDILIBS) $(LIBS)" >>$(BUILD_DETAILS_FILE) ; \
-		{ $(CC) $(CPPFLAGS) $(CFLAGS) $(FTDI_INCLUDES) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) $(FTDILIBS) $(LIBS) >&2 && \
-			( echo "found."; echo "FT232H := yes" >> .features.tmp ) ||	\
-			( echo "not found."; echo "FT232H := no" >> .features.tmp ) } \
-	) || \
-	( echo "not found."; echo "FTDISUPPORT := no" >> .features.tmp ) } \
-	2>>$(BUILD_DETAILS_FILE) | tee -a $(BUILD_DETAILS_FILE)
-endif
-ifeq ($(CONFIG_LINUX_MTD), yes)
-	@printf "Checking if Linux MTD headers are present... " | tee -a $(BUILD_DETAILS_FILE)
-	@echo "$$LINUX_MTD_TEST" > .featuretest.c
-	@printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX)" >>$(BUILD_DETAILS_FILE)
-	@ { $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) >&2 && \
-		( echo "yes."; echo "LINUX_MTD_SUPPORT := yes" >> .features.tmp ) ||	\
-		( echo "no."; echo "LINUX_MTD_SUPPORT := no" >> .features.tmp ) } \
-		2>>$(BUILD_DETAILS_FILE) | tee -a $(BUILD_DETAILS_FILE)
-endif
-ifeq ($(CONFIG_LINUX_SPI), yes)
-	@printf "Checking if Linux SPI headers are present... " | tee -a $(BUILD_DETAILS_FILE)
-	@echo "$$LINUX_SPI_TEST" > .featuretest.c
-	@printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX)" >>$(BUILD_DETAILS_FILE)
-	@ { $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) >&2 && \
-		( echo "yes."; echo "LINUX_SPI_SUPPORT := yes" >> .features.tmp ) ||	\
-		( echo "no."; echo "LINUX_SPI_SUPPORT := no" >> .features.tmp ) } \
-		2>>$(BUILD_DETAILS_FILE) | tee -a $(BUILD_DETAILS_FILE)
-endif
-ifneq ($(NEED_LINUX_I2C), )
-	@printf "Checking if Linux I2C headers are present... " | tee -a $(BUILD_DETAILS_FILE)
-	@echo "$$LINUX_I2C_TEST" > .featuretest.c
-	@printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX)" >>$(BUILD_DETAILS_FILE)
-	@ { $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) >&2 && \
-		( echo "yes."; echo "LINUX_I2C_SUPPORT := yes" >> .features.tmp ) ||	\
-		( echo "no."; echo "LINUX_I2C_SUPPORT := no" >> .features.tmp ) } \
-		2>>$(BUILD_DETAILS_FILE) | tee -a $(BUILD_DETAILS_FILE)
-endif
-ifeq ($(CONFIG_NI845X_SPI), yes)
-	@printf "Checking for NI USB-845x installation... " | tee -a $(BUILD_DETAILS_FILE)
-	@echo "$$NI845X_TEST" > .featuretest.c
-	@printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(NI845X_INCLUDES) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) $(NI845X_LIBS) $(LIBS)" >>$(BUILD_DETAILS_FILE)
-
-	@ { { { { { $(CC) $(CPPFLAGS) $(CFLAGS) $(NI845X_INCLUDES) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) $(NI845X_LIBS) $(LIBS) >&2 && \
-		( echo "yes."; echo "NI845X_SUPPORT := yes" >> .features.tmp ) ||	\
-		{   echo -e "\nUnable to find NI-845x headers or libraries."; \
-			echo "Please pass the NI-845x library path to the make with the CONFIG_NI845X_LIBRARY_PATH parameter,"; \
-			echo "or disable the NI-845x support by specifying make CONFIG_NI845X_SPI=no"; \
-			echo "For the NI-845x 17.0 the library path is:"; \
-			echo " On 32 bit systems: C:\Program Files)\National Instruments\NI-845x\MS Visual C"; \
-			echo " On 64 bit systems: C:\Program Files (x86)\National Instruments\NI-845x\MS Visual C"; \
-			exit 1; }; } \
-		2>>$(BUILD_DETAILS_FILE); echo $? >&3 ; } | tee -a $(BUILD_DETAILS_FILE) >&4; } 3>&1;} | { read rc ; exit ${rc}; } } 4>&1
-endif
-	@printf "Checking for utsname support... " | tee -a $(BUILD_DETAILS_FILE)
-	@echo "$$UTSNAME_TEST" > .featuretest.c
-	@printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX)" >>$(BUILD_DETAILS_FILE)
-	@ { $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) .featuretest.c -o .featuretest$(EXEC_SUFFIX) >&2 && \
-		( echo "found."; echo "UTSNAME := yes" >> .features.tmp ) ||	\
-		( echo "not found."; echo "UTSNAME := no" >> .features.tmp ) } 2>>$(BUILD_DETAILS_FILE) | tee -a $(BUILD_DETAILS_FILE)
-	@printf "Checking for clock_gettime support... " | tee -a $(BUILD_DETAILS_FILE)
-ifeq ($(DISABLE_CLOCK_GETTIME), yes)
-	@ { ( echo "disabled."; echo "CLOCK_GETTIME := no" >>.features.tmp ) } \
-		2>>$(BUILD_DETAILS_FILE) | tee -a $(BUILD_DETAILS_FILE)
-else
-	@echo "$$CLOCK_GETTIME_TEST" >.featuretest.c
-	@printf "\nexec: %s\n" "$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -lrt .featuretest.c -o .featuretest$(EXEC_SUFFIX)" >>$(BUILD_DETAILS_FILE)
-	@ { $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -lrt .featuretest.c -o .featuretest$(EXEC_SUFFIX) >&2 && \
-		( echo "found."; echo "CLOCK_GETTIME := yes" >>.features.tmp ) || \
-		( echo "not found."; echo "CLOCK_GETTIME := no" >>.features.tmp ) } \
-		2>>$(BUILD_DETAILS_FILE) | tee -a $(BUILD_DETAILS_FILE)
-endif
-	@$(DIFF) -q .features.tmp .features >/dev/null 2>&1 && rm .features.tmp || mv .features.tmp .features
-	@rm -f .featuretest.c .featuretest$(EXEC_SUFFIX)
+features: hwlibs
+	@echo "Checking for header \"mtd/mtd-user.h\": $(HAS_LINUX_MTD)"
+	@echo "Checking for header \"linux/spi/spidev.h\": $(HAS_LINUX_SPI)"
+	@echo "Checking for header \"linux/i2c-dev.h\": $(HAS_LINUX_I2C)"
+	@echo "Checking for header \"linux/i2c.h\": $(HAS_LINUX_I2C)"
+	@echo "Checking for header \"sys/utsname.h\": $(HAS_UTSNAME)"
+	@echo "Checking for function \"clock_gettime\": $(HAS_CLOCK_GETTIME)"
 
 $(PROGRAM).8.html: $(PROGRAM).8
 	@groff -mandoc -Thtml $< >$@
