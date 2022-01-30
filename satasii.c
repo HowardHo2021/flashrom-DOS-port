@@ -17,7 +17,8 @@
 /* Datasheets can be found on http://www.siliconimage.com. Great thanks! */
 
 #include "programmer.h"
-#include "hwaccess.h"
+#include "hwaccess_physmap.h"
+#include "platform/pci.h"
 
 #define PCI_VENDOR_ID_SII	0x1095
 
@@ -98,9 +99,6 @@ static int satasii_init(void)
 	struct pci_dev *dev = NULL;
 	uint32_t addr;
 	uint16_t reg_offset;
-
-	if (rget_io_perms())
-		return 1;
 
 	dev = pcidev_init(satas_sii, PCI_BASE_ADDRESS_0);
 	if (!dev)

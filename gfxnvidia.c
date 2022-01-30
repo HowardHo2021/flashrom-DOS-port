@@ -18,7 +18,8 @@
 #include <string.h>
 #include "flash.h"
 #include "programmer.h"
-#include "hwaccess.h"
+#include "hwaccess_physmap.h"
+#include "platform/pci.h"
 
 #define PCI_VENDOR_ID_NVIDIA	0x10de
 
@@ -85,9 +86,6 @@ static int gfxnvidia_init(void)
 {
 	struct pci_dev *dev = NULL;
 	uint32_t reg32;
-
-	if (rget_io_perms())
-		return 1;
 
 	dev = pcidev_init(gfx_nvidia, PCI_BASE_ADDRESS_0);
 	if (!dev)

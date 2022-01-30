@@ -18,7 +18,8 @@
 #include <stdlib.h>
 #include "flash.h"
 #include "programmer.h"
-#include "hwaccess.h"
+#include "hwaccess_physmap.h"
+#include "platform/pci.h"
 
 static uint8_t *nicintel_bar;
 static uint8_t *nicintel_control_bar;
@@ -67,12 +68,6 @@ static int nicintel_init(void)
 {
 	struct pci_dev *dev = NULL;
 	uintptr_t addr;
-
-	/* Needed only for PCI accesses on some platforms.
-	 * FIXME: Refactor that into get_mem_perms/rget_io_perms/get_pci_perms?
-	 */
-	if (rget_io_perms())
-		return 1;
 
 	/* FIXME: BAR2 is not available if the device uses the CardBus function. */
 	dev = pcidev_init(nics_intel, PCI_BASE_ADDRESS_2);

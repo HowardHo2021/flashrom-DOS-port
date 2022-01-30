@@ -154,6 +154,103 @@ static int parse_wp_range(unsigned int *start, unsigned int *len)
 	return 0;
 }
 
+static int do_read(struct flashctx *const flash, const char *const filename)
+{
+	int ret;
+
+	unsigned long size = flash->chip->total_size * 1024;
+	unsigned char *buf = calloc(size, sizeof(unsigned char));
+	if (!buf) {
+		msg_gerr("Memory allocation failed!\n");
+		return 1;
+	}
+
+	ret = flashrom_image_read(flash, buf, size);
+	if (ret > 0)
+		goto free_out;
+
+	if (write_buf_to_include_args(flash, buf)) {
+		ret = 1;
+		goto free_out;
+	}
+	if (filename)
+		ret = write_buf_to_file(buf, size, filename);
+
+free_out:
+	free(buf);
+	return ret;
+}
+
+static int do_extract(struct flashctx *const flash)
+{
+	prepare_layout_for_extraction(flash);
+	return do_read(flash, NULL);
+}
+
+static int do_write(struct flashctx *const flash, const char *const filename, const char *const referencefile)
+{
+	const size_t flash_size = flash->chip->total_size * 1024;
+	int ret = 1;
+
+	uint8_t *const newcontents = malloc(flash_size);
+	uint8_t *const refcontents = referencefile ? malloc(flash_size) : NULL;
+
+	if (!newcontents || (referencefile && !refcontents)) {
+		msg_gerr("Out of memory!\n");
+		goto _free_ret;
+	}
+
+	/* Read '-w' argument first... */
+	if (read_buf_from_file(newcontents, flash_size, filename))
+		goto _free_ret;
+	/*
+	 * ... then update newcontents with contents from files provided to '-i'
+	 * args if needed.
+	 */
+	if (read_buf_from_include_args(flash, newcontents))
+		goto _free_ret;
+
+	if (referencefile) {
+		if (read_buf_from_file(refcontents, flash_size, referencefile))
+			goto _free_ret;
+	}
+
+	ret = flashrom_image_write(flash, newcontents, flash_size, refcontents);
+
+_free_ret:
+	free(refcontents);
+	free(newcontents);
+	return ret;
+}
+
+static int do_verify(struct flashctx *const flash, const char *const filename)
+{
+	const size_t flash_size = flash->chip->total_size * 1024;
+	int ret = 1;
+
+	uint8_t *const newcontents = malloc(flash_size);
+	if (!newcontents) {
+		msg_gerr("Out of memory!\n");
+		goto _free_ret;
+	}
+
+	/* Read '-v' argument first... */
+	if (read_buf_from_file(newcontents, flash_size, filename))
+		goto _free_ret;
+	/*
+	 * ... then update newcontents with contents from files provided to '-i'
+	 * args if needed.
+	 */
+	if (read_buf_from_include_args(flash, newcontents))
+		goto _free_ret;
+
+	ret = flashrom_image_verify(flash, newcontents, flash_size);
+
+_free_ret:
+	free(newcontents);
+	return ret;
+}
+
 int main(int argc, char *argv[])
 {
 	const struct flashchip *chip = NULL;
@@ -782,7 +879,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (set_wp_region && wp_region) {
-		if (get_region_range(layout, wp_region, &wp_start, &wp_len)) {
+		if (flashrom_layout_get_region_range(layout, wp_region, &wp_start, &wp_len)) {
 			ret = 1;
 			goto out_release;
 		}
@@ -840,8 +937,18 @@ int main(int argc, char *argv[])
 		ret = do_read(fill_flash, filename);
 	else if (extract_it)
 		ret = do_extract(fill_flash);
-	else if (erase_it)
-		ret = do_erase(fill_flash);
+	else if (erase_it) {
+		ret = flashrom_flash_erase(fill_flash);
+		/*
+		 * FIXME: Do we really want the scary warning if erase failed?
+		 * After all, after erase the chip is either blank or partially
+		 * blank or it has the old contents. A blank chip won't boot,
+		 * so if the user wanted erase and reboots afterwards, the user
+		 * knows very well that booting won't work.
+		 */
+		if (ret)
+			emergency_help_message();
+	}
 	else if (write_it)
 		ret = do_write(fill_flash, filename, referencefile);
 	else if (verify_it)

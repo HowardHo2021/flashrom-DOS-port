@@ -231,17 +231,7 @@ int chipset_flash_enable(void);
 int processor_flash_enable(void);
 #endif
 
-/* physmap.c */
-void *physmap(const char *descr, uintptr_t phys_addr, size_t len);
-void *rphysmap(const char *descr, uintptr_t phys_addr, size_t len);
-void *physmap_ro(const char *descr, uintptr_t phys_addr, size_t len);
-void *physmap_ro_unaligned(const char *descr, uintptr_t phys_addr, size_t len);
-void physunmap(void *virt_addr, size_t len);
-void physunmap_unaligned(void *virt_addr, size_t len);
 #if CONFIG_INTERNAL == 1
-int setup_cpu_msr(int cpu);
-void cleanup_cpu_msr(void);
-
 /* cbtable.c */
 int cb_parse_table(const char **vendor, const char **model);
 int cb_check_image(const uint8_t *bios, unsigned int size);
@@ -271,7 +261,6 @@ struct pci_dev *pci_dev_find(uint16_t vendor, uint16_t device);
 struct pci_dev *pci_card_find(uint16_t vendor, uint16_t device,
 			      uint16_t card_vendor, uint16_t card_device);
 #endif
-int rget_io_perms(void);
 #if CONFIG_INTERNAL == 1
 extern int is_laptop;
 extern int laptop_ok;

@@ -18,17 +18,20 @@
 
 #include <unistd.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include "flash.h"
-#include "programmer.h"
 #include "hwaccess.h"
+#include "hwaccess_physmap.h"
 
 #if !defined(__DJGPP__) && !defined(__LIBPAYLOAD__)
 /* No file access needed/possible to get mmap access permissions or access MSR. */
+#include <unistd.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <fcntl.h>
 #endif
 
@@ -363,326 +366,211 @@ void *physmap_ro_unaligned(const char *descr, uintptr_t phys_addr, size_t len)
 	return physmap_common(descr, phys_addr, len, PHYSM_RO, PHYSM_NOCLEANUP, PHYSM_EXACT);
 }
 
-#if CONFIG_INTERNAL == 1
-/* MSR abstraction implementations for Linux, OpenBSD, FreeBSD/Dragonfly, OSX, libpayload
- * and a non-working default implementation on the bottom. See also hwaccess.h for some (re)declarations. */
-#if defined(__i386__) || defined(__x86_64__)
-
-#ifdef __linux__
-/*
- * Reading and writing to MSRs, however requires instructions rdmsr/wrmsr,
- * which are ring0 privileged instructions so only the kernel can do the
- * read/write. This function, therefore, requires that the msr kernel module
- * be loaded to access these instructions from user space using device
- * /dev/cpu/0/msr.
+/* Prevent reordering and/or merging of reads/writes to hardware.
+ * Such reordering and/or merging would break device accesses which depend on the exact access order.
  */
-
-static int fd_msr = -1;
-
-msr_t rdmsr(int addr)
+static inline void sync_primitive(void)
 {
-	uint32_t buf[2];
-	msr_t msr = { 0xffffffff, 0xffffffff };
-
-	if (lseek(fd_msr, (off_t) addr, SEEK_SET) == -1) {
-		msg_perr("Could not lseek() MSR: %s\n", strerror(errno));
-		close(fd_msr);
-		exit(1);
-	}
-
-	if (read(fd_msr, buf, 8) == 8) {
-		msr.lo = buf[0];
-		msr.hi = buf[1];
-		return msr;
-	}
-
-	if (errno != EIO) {
-		// A severe error.
-		msg_perr("Could not read() MSR: %s\n", strerror(errno));
-		close(fd_msr);
-		exit(1);
-	}
-
-	return msr;
-}
-
-int wrmsr(int addr, msr_t msr)
-{
-	uint32_t buf[2];
-	buf[0] = msr.lo;
-	buf[1] = msr.hi;
-
-	if (lseek(fd_msr, (off_t) addr, SEEK_SET) == -1) {
-		msg_perr("Could not lseek() MSR: %s\n", strerror(errno));
-		close(fd_msr);
-		exit(1);
-	}
-
-	if (write(fd_msr, buf, 8) != 8 && errno != EIO) {
-		msg_perr("Could not write() MSR: %s\n", strerror(errno));
-		close(fd_msr);
-		exit(1);
-	}
-
-	/* Some MSRs must not be written. */
-	if (errno == EIO)
-		return -1;
-
-	return 0;
-}
-
-int setup_cpu_msr(int cpu)
-{
-	char msrfilename[64] = { 0 };
-	snprintf(msrfilename, sizeof(msrfilename), "/dev/cpu/%d/msr", cpu);
-
-	if (fd_msr != -1) {
-		msg_pinfo("MSR was already initialized\n");
-		return -1;
-	}
-
-	fd_msr = open(msrfilename, O_RDWR);
-
-	if (fd_msr < 0) {
-		msg_perr("Error while opening %s: %s\n", msrfilename, strerror(errno));
-		msg_pinfo("Did you run 'modprobe msr'?\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-void cleanup_cpu_msr(void)
-{
-	if (fd_msr == -1) {
-		msg_pinfo("No MSR initialized.\n");
-		return;
-	}
-
-	close(fd_msr);
-
-	/* Clear MSR file descriptor. */
-	fd_msr = -1;
-}
-#elif defined(__OpenBSD__) && defined (__i386__) /* This does only work for certain AMD Geode LX systems see amdmsr(4). */
-#include <sys/ioctl.h>
-#include <machine/amdmsr.h>
-
-static int fd_msr = -1;
-
-msr_t rdmsr(int addr)
-{
-	struct amdmsr_req args;
-
-	msr_t msr = { 0xffffffff, 0xffffffff };
-
-	args.addr = (uint32_t)addr;
-
-	if (ioctl(fd_msr, RDMSR, &args) < 0) {
-		msg_perr("Error while executing RDMSR ioctl: %s\n", strerror(errno));
-		close(fd_msr);
-		exit(1);
-	}
-
-	msr.lo = args.val & 0xffffffff;
-	msr.hi = args.val >> 32;
-
-	return msr;
-}
-
-int wrmsr(int addr, msr_t msr)
-{
-	struct amdmsr_req args;
-
-	args.addr = addr;
-	args.val = (((uint64_t)msr.hi) << 32) | msr.lo;
-
-	if (ioctl(fd_msr, WRMSR, &args) < 0) {
-		msg_perr("Error while executing WRMSR ioctl: %s\n", strerror(errno));
-		close(fd_msr);
-		exit(1);
-	}
-
-	return 0;
-}
-
-int setup_cpu_msr(int cpu)
-{
-	char msrfilename[64] = { 0 };
-	snprintf(msrfilename, sizeof(msrfilename), "/dev/amdmsr");
-
-	if (fd_msr != -1) {
-		msg_pinfo("MSR was already initialized\n");
-		return -1;
-	}
-
-	fd_msr = open(msrfilename, O_RDWR);
-
-	if (fd_msr < 0) {
-		msg_perr("Error while opening %s: %s\n", msrfilename, strerror(errno));
-		return -1;
-	}
-
-	return 0;
-}
-
-void cleanup_cpu_msr(void)
-{
-	if (fd_msr == -1) {
-		msg_pinfo("No MSR initialized.\n");
-		return;
-	}
-
-	close(fd_msr);
-
-	/* Clear MSR file descriptor. */
-	fd_msr = -1;
-}
-
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
-#include <sys/ioctl.h>
-
-typedef struct {
-	int msr;
-	uint64_t data;
-} cpu_msr_args_t;
-#define CPU_RDMSR _IOWR('c', 1, cpu_msr_args_t)
-#define CPU_WRMSR _IOWR('c', 2, cpu_msr_args_t)
-
-static int fd_msr = -1;
-
-msr_t rdmsr(int addr)
-{
-	cpu_msr_args_t args;
-
-	msr_t msr = { 0xffffffff, 0xffffffff };
-
-	args.msr = addr;
-
-	if (ioctl(fd_msr, CPU_RDMSR, &args) < 0) {
-		msg_perr("Error while executing CPU_RDMSR ioctl: %s\n", strerror(errno));
-		close(fd_msr);
-		exit(1);
-	}
-
-	msr.lo = args.data & 0xffffffff;
-	msr.hi = args.data >> 32;
-
-	return msr;
-}
-
-int wrmsr(int addr, msr_t msr)
-{
-	cpu_msr_args_t args;
-
-	args.msr = addr;
-	args.data = (((uint64_t)msr.hi) << 32) | msr.lo;
-
-	if (ioctl(fd_msr, CPU_WRMSR, &args) < 0) {
-		msg_perr("Error while executing CPU_WRMSR ioctl: %s\n", strerror(errno));
-		close(fd_msr);
-		exit(1);
-	}
-
-	return 0;
-}
-
-int setup_cpu_msr(int cpu)
-{
-	char msrfilename[64] = { 0 };
-	snprintf(msrfilename, sizeof(msrfilename), "/dev/cpu%d", cpu);
-
-	if (fd_msr != -1) {
-		msg_pinfo("MSR was already initialized\n");
-		return -1;
-	}
-
-	fd_msr = open(msrfilename, O_RDWR);
-
-	if (fd_msr < 0) {
-		msg_perr("Error while opening %s: %s\n", msrfilename, strerror(errno));
-		msg_pinfo("Did you install ports/sysutils/devcpu?\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-void cleanup_cpu_msr(void)
-{
-	if (fd_msr == -1) {
-		msg_pinfo("No MSR initialized.\n");
-		return;
-	}
-
-	close(fd_msr);
-
-	/* Clear MSR file descriptor. */
-	fd_msr = -1;
-}
-
-#elif defined(__MACH__) && defined(__APPLE__)
-/* rdmsr() and wrmsr() are provided by DirectHW which needs neither setup nor cleanup. */
-int setup_cpu_msr(int cpu)
-{
-	// Always succeed for now
-	return 0;
-}
-
-void cleanup_cpu_msr(void)
-{
-	// Nothing, yet.
-}
-#elif defined(__LIBPAYLOAD__)
-msr_t libpayload_rdmsr(int addr)
-{
-	msr_t msr;
-	unsigned long long val = _rdmsr(addr);
-	msr.lo = val & 0xffffffff;
-	msr.hi = val >> 32;
-	return msr;
-}
-
-int libpayload_wrmsr(int addr, msr_t msr)
-{
-	_wrmsr(addr, msr.lo | ((unsigned long long)msr.hi << 32));
-	return 0;
-}
-
-int setup_cpu_msr(int cpu)
-{
-	return 0;
-}
-
-void cleanup_cpu_msr(void)
-{
-}
+/* This is not needed for...
+ * - x86: uses uncached accesses which have a strongly ordered memory model.
+ * - MIPS: uses uncached accesses in mode 2 on /dev/mem which has also a strongly ordered memory model.
+ * - ARM: uses a strongly ordered memory model for device memories.
+ *
+ * See also https://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/tree/Documentation/memory-barriers.txt
+ */
+// cf. http://lxr.free-electrons.com/source/arch/powerpc/include/asm/barrier.h
+#if defined(__powerpc) || defined(__powerpc__) || defined(__powerpc64__) || defined(__POWERPC__) || \
+      defined(__ppc__) || defined(__ppc64__) || defined(_M_PPC) || defined(_ARCH_PPC) || \
+      defined(_ARCH_PPC64) || defined(__ppc)
+	asm("eieio" : : : "memory");
+#elif (__sparc__) || defined (__sparc)
+#if defined(__sparc_v9__) || defined(__sparcv9)
+	/* Sparc V9 CPUs support three different memory orderings that range from x86-like TSO to PowerPC-like
+	 * RMO. The modes can be switched at runtime thus to make sure we maintain the right order of access we
+	 * use the strongest hardware memory barriers that exist on Sparc V9. */
+	asm volatile ("membar #Sync" ::: "memory");
+#elif defined(__sparc_v8__) || defined(__sparcv8)
+	/* On SPARC V8 there is no RMO just PSO and that does not apply to I/O accesses... but if V8 code is run
+	 * on V9 CPUs it might apply... or not... we issue a write barrier anyway. That's the most suitable
+	 * operation in the V8 instruction set anyway. If you know better then please tell us. */
+	asm volatile ("stbar");
 #else
-/* default MSR implementation */
-msr_t rdmsr(int addr)
-{
-	msr_t ret = { 0xffffffff, 0xffffffff };
-
-	return ret;
+	#error Unknown and/or unsupported SPARC instruction set version detected.
+#endif
+#endif
 }
 
-int wrmsr(int addr, msr_t msr)
+void mmio_writeb(uint8_t val, void *addr)
 {
-	return -1;
+	*(volatile uint8_t *) addr = val;
+	sync_primitive();
 }
 
-int setup_cpu_msr(int cpu)
+void mmio_writew(uint16_t val, void *addr)
 {
-	msg_pinfo("No MSR support for your OS yet.\n");
-	return -1;
+	*(volatile uint16_t *) addr = val;
+	sync_primitive();
 }
 
-void cleanup_cpu_msr(void)
+void mmio_writel(uint32_t val, void *addr)
 {
-	// Nothing, yet.
+	*(volatile uint32_t *) addr = val;
+	sync_primitive();
 }
-#endif // OS switches for MSR code
-#else // x86
-/* Does MSR exist on non-x86 architectures? */
-#endif // arch switches for MSR code
-#endif // CONFIG_INTERNAL == 1
+
+uint8_t mmio_readb(const void *addr)
+{
+	return *(volatile const uint8_t *) addr;
+}
+
+uint16_t mmio_readw(const void *addr)
+{
+	return *(volatile const uint16_t *) addr;
+}
+
+uint32_t mmio_readl(const void *addr)
+{
+	return *(volatile const uint32_t *) addr;
+}
+
+void mmio_readn(const void *addr, uint8_t *buf, size_t len)
+{
+	memcpy(buf, addr, len);
+	return;
+}
+
+void mmio_le_writeb(uint8_t val, void *addr)
+{
+	mmio_writeb(cpu_to_le8(val), addr);
+}
+
+void mmio_le_writew(uint16_t val, void *addr)
+{
+	mmio_writew(cpu_to_le16(val), addr);
+}
+
+void mmio_le_writel(uint32_t val, void *addr)
+{
+	mmio_writel(cpu_to_le32(val), addr);
+}
+
+uint8_t mmio_le_readb(const void *addr)
+{
+	return le_to_cpu8(mmio_readb(addr));
+}
+
+uint16_t mmio_le_readw(const void *addr)
+{
+	return le_to_cpu16(mmio_readw(addr));
+}
+
+uint32_t mmio_le_readl(const void *addr)
+{
+	return le_to_cpu32(mmio_readl(addr));
+}
+
+enum mmio_write_type {
+	mmio_write_type_b,
+	mmio_write_type_w,
+	mmio_write_type_l,
+};
+
+struct undo_mmio_write_data {
+	void *addr;
+	int reg;
+	enum mmio_write_type type;
+	union {
+		uint8_t bdata;
+		uint16_t wdata;
+		uint32_t ldata;
+	};
+};
+
+static int undo_mmio_write(void *p)
+{
+	struct undo_mmio_write_data *data = p;
+	msg_pdbg("Restoring MMIO space at %p\n", data->addr);
+	switch (data->type) {
+	case mmio_write_type_b:
+		mmio_writeb(data->bdata, data->addr);
+		break;
+	case mmio_write_type_w:
+		mmio_writew(data->wdata, data->addr);
+		break;
+	case mmio_write_type_l:
+		mmio_writel(data->ldata, data->addr);
+		break;
+	}
+	/* p was allocated in register_undo_mmio_write. */
+	free(p);
+	return 0;
+}
+
+#define register_undo_mmio_write(a, c)					\
+{									\
+	struct undo_mmio_write_data *undo_mmio_write_data;		\
+	undo_mmio_write_data = malloc(sizeof(*undo_mmio_write_data));	\
+	if (!undo_mmio_write_data) {					\
+		msg_gerr("Out of memory!\n");				\
+		exit(1);						\
+	}								\
+	undo_mmio_write_data->addr = a;					\
+	undo_mmio_write_data->type = mmio_write_type_##c;		\
+	undo_mmio_write_data->c##data = mmio_read##c(a);		\
+	register_shutdown(undo_mmio_write, undo_mmio_write_data);	\
+}
+
+#define register_undo_mmio_writeb(a) register_undo_mmio_write(a, b)
+#define register_undo_mmio_writew(a) register_undo_mmio_write(a, w)
+#define register_undo_mmio_writel(a) register_undo_mmio_write(a, l)
+
+void rmmio_writeb(uint8_t val, void *addr)
+{
+	register_undo_mmio_writeb(addr);
+	mmio_writeb(val, addr);
+}
+
+void rmmio_writew(uint16_t val, void *addr)
+{
+	register_undo_mmio_writew(addr);
+	mmio_writew(val, addr);
+}
+
+void rmmio_writel(uint32_t val, void *addr)
+{
+	register_undo_mmio_writel(addr);
+	mmio_writel(val, addr);
+}
+
+void rmmio_le_writeb(uint8_t val, void *addr)
+{
+	register_undo_mmio_writeb(addr);
+	mmio_le_writeb(val, addr);
+}
+
+void rmmio_le_writew(uint16_t val, void *addr)
+{
+	register_undo_mmio_writew(addr);
+	mmio_le_writew(val, addr);
+}
+
+void rmmio_le_writel(uint32_t val, void *addr)
+{
+	register_undo_mmio_writel(addr);
+	mmio_le_writel(val, addr);
+}
+
+void rmmio_valb(void *addr)
+{
+	register_undo_mmio_writeb(addr);
+}
+
+void rmmio_valw(void *addr)
+{
+	register_undo_mmio_writew(addr);
+}
+
+void rmmio_vall(void *addr)
+{
+	register_undo_mmio_writel(addr);
+}

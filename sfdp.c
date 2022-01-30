@@ -131,10 +131,6 @@ static int sfdp_fill_flash(struct flashchip *chip, uint8_t *buf, uint16_t len)
 	int j;
 
 	msg_cdbg("Parsing JEDEC flash parameter table... ");
-	if (len != 9 * 4 && len != 4 * 4) {
-		msg_cdbg("%s: len out of spec\n", __func__);
-		return 1;
-	}
 	msg_cdbg2("\n");
 
 	/* 1. double word */
@@ -373,7 +369,7 @@ int probe_spi_sfdp(struct flashctx *flash)
 				msg_cdbg("The chip contains an unknown "
 					  "version of the JEDEC flash "
 					  "parameters table, skipping it.\n");
-			} else if (len != 9 * 4 && len != 4 * 4) {
+			} else if (len != 4 * 4 && len < 9 * 4) {
 				msg_cdbg("Length of the mandatory JEDEC SFDP "
 					 "parameter table is wrong (%d B), "
 					 "skipping it.\n", len);

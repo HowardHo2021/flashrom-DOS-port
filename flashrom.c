@@ -37,7 +37,7 @@
 #include "flash.h"
 #include "flashchips.h"
 #include "programmer.h"
-#include "hwaccess.h"
+#include "hwaccess_physmap.h"
 #include "chipdrivers.h"
 
 const char flashrom_version[] = FLASHROM_VERSION;
@@ -931,7 +931,7 @@ out:
  * @param buf      Chip-sized buffer to write data to
  * @return 0 on success
  */
-static int read_buf_from_include_args(const struct flashctx *const flash,
+int read_buf_from_include_args(const struct flashctx *const flash,
 				      unsigned char *buf)
 {
 	const struct flashrom_layout *const layout = get_layout(flash);
@@ -1028,7 +1028,7 @@ out:
  * @param buf      Chip-sized buffer to read data from
  * @return 0 on success
  */
-static int write_buf_to_include_args(const struct flashctx *const flash,
+int write_buf_to_include_args(const struct flashctx *const flash,
 				     unsigned char *buf)
 {
 	const struct flashrom_layout *const layout = get_layout(flash);
@@ -1098,7 +1098,8 @@ int read_flash_to_file(struct flashctx *flash, const char *filename)
 		goto out_free;
 	}
 
-	ret = write_buf_to_file(buf, size, filename);
+	if (filename)
+		ret = write_buf_to_file(buf, size, filename);
 out_free:
 	free(buf);
 	msg_cinfo("%s.\n", ret ? "FAILED" : "done");
@@ -1552,7 +1553,7 @@ static void nonfatal_help_message(void)
 			 "https://www.flashrom.org/Contact for details), thanks!\n");
 }
 
-static void emergency_help_message(void)
+void emergency_help_message(void)
 {
 	msg_gerr("Your flash chip is in an unknown state.\n");
 #if CONFIG_INTERNAL == 1
@@ -2188,102 +2189,3 @@ _free_ret:
 }
 
 /** @} */ /* end flashrom-ops */
-
-int do_read(struct flashctx *const flash, const char *const filename)
-{
-	if (prepare_flash_access(flash, true, false, false, false))
-		return 1;
-
-	const int ret = read_flash_to_file(flash, filename);
-
-	finalize_flash_access(flash);
-
-	return ret;
-}
-
-int do_extract(struct flashctx *const flash)
-{
-	prepare_layout_for_extraction(flash);
-	return do_read(flash, NULL);
-}
-
-int do_erase(struct flashctx *const flash)
-{
-	const int ret = flashrom_flash_erase(flash);
-
-	/*
-	 * FIXME: Do we really want the scary warning if erase failed?
-	 * After all, after erase the chip is either blank or partially
-	 * blank or it has the old contents. A blank chip won't boot,
-	 * so if the user wanted erase and reboots afterwards, the user
-	 * knows very well that booting won't work.
-	 */
-	if (ret)
-		emergency_help_message();
-
-	return ret;
-}
-
-int do_write(struct flashctx *const flash, const char *const filename, const char *const referencefile)
-{
-	const size_t flash_size = flash->chip->total_size * 1024;
-	int ret = 1;
-
-	uint8_t *const newcontents = malloc(flash_size);
-	uint8_t *const refcontents = referencefile ? malloc(flash_size) : NULL;
-
-	if (!newcontents || (referencefile && !refcontents)) {
-		msg_gerr("Out of memory!\n");
-		goto _free_ret;
-	}
-
-	/* Read '-w' argument first... */
-	if (read_buf_from_file(newcontents, flash_size, filename))
-		goto _free_ret;
-	/*
-	 * ... then update newcontents with contents from files provided to '-i'
-	 * args if needed.
-	 */
-	if (read_buf_from_include_args(flash, newcontents))
-		goto _free_ret;
-
-	if (referencefile) {
-		if (read_buf_from_file(refcontents, flash_size, referencefile))
-			goto _free_ret;
-	}
-
-	ret = flashrom_image_write(flash, newcontents, flash_size, refcontents);
-
-_free_ret:
-	free(refcontents);
-	free(newcontents);
-	return ret;
-}
-
-int do_verify(struct flashctx *const flash, const char *const filename)
-{
-	const size_t flash_size = flash->chip->total_size * 1024;
-	int ret = 1;
-
-	uint8_t *const newcontents = malloc(flash_size);
-	if (!newcontents) {
-		msg_gerr("Out of memory!\n");
-		goto _free_ret;
-	}
-
-	/* Read '-v' argument first... */
-	if (read_buf_from_file(newcontents, flash_size, filename))
-		goto _free_ret;
-	/*
-	 * ... then update newcontents with contents from files provided to '-i'
-	 * args if needed.
-	 */
-	if (read_buf_from_include_args(flash, newcontents))
-		goto _free_ret;
-
-	ret = flashrom_image_verify(flash, newcontents, flash_size);
-
-_free_ret:
-	free(newcontents);
-	return ret;
-}

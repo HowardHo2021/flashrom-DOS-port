@@ -34,7 +34,8 @@
 #include "flash.h"
 #include "spi.h"
 #include "programmer.h"
-#include "hwaccess.h"
+#include "hwaccess_physmap.h"
+#include "platform/pci.h"
 
 #define PCI_VENDOR_ID_INTEL 0x8086
 #define MEMMAP_SIZE 0x1c /* Only EEC, EERD and EEWR are needed. */
@@ -459,9 +460,6 @@ static const struct opaque_master opaque_master_nicintel_ee_i210 = {
 
 static int nicintel_ee_init(void)
 {
-	if (rget_io_perms())
-		return 1;
-
 	struct pci_dev *dev = pcidev_init(nics_intel_ee, PCI_BASE_ADDRESS_0);
 	if (!dev)
 		return 1;

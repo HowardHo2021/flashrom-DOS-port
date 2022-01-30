@@ -23,7 +23,7 @@
 #include <stdlib.h>
 #include "flash.h"
 #include "programmer.h"
-#include "hwaccess.h"
+#include "hwaccess_physmap.h"
 #include "spi.h"
 #include "ich_descriptors.h"
 

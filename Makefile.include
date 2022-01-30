@@ -33,116 +33,21 @@ endef
 
 # Run the C Preprocessor with file $1 and return the last line, removing quotes.
 define c_macro_test
-$(strip $(shell $(CC) -E $1 2>/dev/null | tail -1 | tr -d '"'))
+$(strip $(call debug_shell, $(CC) -E $1 | tail -1 | tr -d '"'))
 endef
 
-define c_compile_test
-$(shell $(CC) -c -Wall -Werror -o /dev/null $1 2>/dev/null && echo yes || echo no)
+define c_compile_test # $1: files to compile, $2: cflags
+$(call debug_shell, $(CC) -c -Wall -Werror $2 $1 -o /dev/null && echo yes || echo no)
 endef
 
-define LIBPCI_TEST
-/* Avoid a failing test due to libpci header symbol shadowing breakage */
-#define index shadow_workaround_index
-#if !defined __NetBSD__
-#include <pci/pci.h>
-#else
-#include <pciutils/pci.h>
-#endif
-struct pci_access *pacc;
-int main(int argc, char **argv)
-{
-	(void) argc;
-	(void) argv;
-	pacc = pci_alloc();
-	return 0;
-}
+define find_dependency
+$(call debug_shell, $(if $(PKG_CONFIG_LIBDIR),PKG_CONFIG_LIBDIR=$(PKG_CONFIG_LIBDIR),) $(PKG_CONFIG) --exists $1 && echo yes || echo no)
 endef
-export LIBPCI_TEST
 
-define PCI_GET_DEV_TEST
-/* Avoid a failing test due to libpci header symbol shadowing breakage */
-#define index shadow_workaround_index
-#if !defined __NetBSD__
-#include <pci/pci.h>
-#else
-#include <pciutils/pci.h>
-#endif
-struct pci_access *pacc;
-struct pci_dev *dev = {0};
-int main(int argc, char **argv)
-{
-	(void) argc;
-	(void) argv;
-	pacc = pci_alloc();
-	dev = pci_get_dev(pacc, dev->domain, dev->bus, dev->dev, 1);
-	return 0;
-}
+define dependency_cflags
+$(call debug_shell, $(if $(PKG_CONFIG_LIBDIR),PKG_CONFIG_LIBDIR=$(PKG_CONFIG_LIBDIR),) $(PKG_CONFIG) --cflags $1 2>/dev/null)
 endef
-export PCI_GET_DEV_TEST
 
-define LIBUSB1_TEST
-#include <stddef.h>
-#include <libusb.h>
-int main(int argc, char **argv)
-{
-	(void)argc;
-	(void)argv;
-	libusb_init(NULL);
-	return 0;
-}
+define dependency_ldflags
+$(call debug_shell, $(if $(PKG_CONFIG_LIBDIR),PKG_CONFIG_LIBDIR=$(PKG_CONFIG_LIBDIR),) $(PKG_CONFIG) --libs $1 2>/dev/null)
 endef
-export LIBUSB1_TEST
-
-define LIBJAYLINK_TEST
-#include <stddef.h>
-#include <libjaylink/libjaylink.h>
-int main(int argc, char **argv)
-{
-	struct jaylink_context *ctx;
-
-	(void)argc;
-	(void)argv;
-
-	jaylink_init(&ctx);
-	jaylink_exit(ctx);
-
-	return 0;
-}
-endef
-export LIBJAYLINK_TEST
-
-define FTDI_TEST
-#include <stdlib.h>
-#include <ftdi.h>
-struct ftdi_context *ftdic = NULL;
-int main(int argc, char **argv)
-{
-	(void) argc;
-	(void) argv;
-	return ftdi_init(ftdic);
-}
-endef
-export FTDI_TEST
-
-define FTDI_232H_TEST
-#include <ftdi.h>
-enum ftdi_chip_type type = TYPE_232H;
-endef
-export FTDI_232H_TEST
-
-define NI845X_TEST
-#include <ni845x.h>
-
-int main(int argc, char **argv)
-{
-    (void) argc;
-    (void) argv;
-    char I2C_Device[256];
-    NiHandle Dev_Handle;
-    uInt32 NumberFound = 0;
-    ni845xFindDevice(I2C_Device, &Dev_Handle, &NumberFound);
-    ni845xCloseFindDeviceHandle(Dev_Handle);
-    return 0;
-}
-endef
-export NI845X_TEST

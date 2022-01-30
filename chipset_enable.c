@@ -33,11 +33,15 @@
 #include <errno.h>
 #include "flash.h"
 #include "programmer.h"
-#include "hwaccess.h"
+#include "hwaccess_physmap.h"
+#include "platform/pci.h"
 
 #define NOT_DONE_YET 1
 
 #if defined(__i386__) || defined(__x86_64__)
+
+#include "hwaccess_x86_io.h"
+#include "hwaccess_x86_msr.h"
 
 static int enable_flash_ali_m1533(struct pci_dev *dev, const char *name)
 {
@@ -2119,6 +2123,15 @@ const struct penable chipset_enables[] = {
 	{0x8086, 0x068d, B_S,    NT,  "Intel", "HM470",				enable_flash_pch400},
 	{0x8086, 0x068e, B_S,    NT,  "Intel", "WM490",				enable_flash_pch400},
 	{0x8086, 0x0697, B_S,    NT,  "Intel", "W480",				enable_flash_pch400},
+	{0x8086, 0x4384, B_S,    NT,  "Intel", "Q570",				enable_flash_pch500},
+	{0x8086, 0x4385, B_S,    NT,  "Intel", "Z590",				enable_flash_pch500},
+	{0x8086, 0x4386, B_S,    NT,  "Intel", "H570",				enable_flash_pch500},
+	{0x8086, 0x4387, B_S,    NT,  "Intel", "B560",				enable_flash_pch500},
+	{0x8086, 0x4388, B_S,    NT,  "Intel", "H510",				enable_flash_pch500},
+	{0x8086, 0x438f, B_S,    NT,  "Intel", "W580",				enable_flash_pch500},
+	{0x8086, 0x4389, B_S,    NT,  "Intel", "WM590",				enable_flash_pch500},
+	{0x8086, 0x438a, B_S,    NT,  "Intel", "QM580",				enable_flash_pch500},
+	{0x8086, 0x438b, B_S,    DEP, "Intel", "HM570",				enable_flash_pch500},
 #endif
 	{0},
 };

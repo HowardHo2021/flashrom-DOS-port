@@ -34,7 +34,8 @@
 #include <unistd.h>
 #include "flash.h"
 #include "programmer.h"
-#include "hwaccess.h"
+#include "hwaccess_physmap.h"
+#include "platform/pci.h"
 
 #define PCI_VENDOR_ID_INTEL 0x8086
 #define MEMMAP_SIZE getpagesize()
@@ -289,9 +290,6 @@ static int nicintel_spi_i210_enable_flash(struct nicintel_spi_data *data)
 static int nicintel_spi_init(void)
 {
 	struct pci_dev *dev = NULL;
-
-	if (rget_io_perms())
-		return 1;
 
 	dev = pcidev_init(nics_intel_spi, PCI_BASE_ADDRESS_0);
 	if (!dev)
