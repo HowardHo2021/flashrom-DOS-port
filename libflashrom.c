@@ -14,11 +14,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-/**
- * @mainpage
- *
- * Have a look at the Modules section for a function reference.
- */
 
 #include <errno.h>
 #include <stdlib.h>
@@ -31,21 +26,12 @@
 #include "layout.h"
 #include "ich_descriptors.h"
 #include "libflashrom.h"
+#include "writeprotect.h"
 
-/**
- * @defgroup flashrom-general General
- * @{
- */
 
 /** Pointer to log callback function. */
 static flashrom_log_callback *global_log_callback = NULL;
 
-/**
- * @brief Initialize libflashrom.
- *
- * @param perform_selfcheck If not zero, perform a self check.
- * @return 0 on success
- */
 int flashrom_init(const int perform_selfcheck)
 {
 	if (perform_selfcheck && selfcheck())
@@ -54,10 +40,6 @@ int flashrom_init(const int perform_selfcheck)
 	return 0;
 }
 
-/**
- * @brief Shut down libflashrom.
- * @return 0 on success
- */
 int flashrom_shutdown(void)
 {
 	return 0; /* TODO: nothing to do? */
@@ -65,17 +47,6 @@ int flashrom_shutdown(void)
 
 /* TODO: flashrom_set_loglevel()? do we need it?
          For now, let the user decide in their callback. */
-
-/**
- * @brief Set the log callback function.
- *
- * Set a callback function which will be invoked whenever libflashrom wants
- * to output messages. This allows frontends to do whatever they see fit with
- * such messages, e.g. write them to syslog, or to file, or print them in a
- * GUI window, etc.
- *
- * @param log_callback Pointer to the new log callback function.
- */
 void flashrom_set_log_callback(flashrom_log_callback *const log_callback)
 {
 	global_log_callback = log_callback;
@@ -94,28 +65,30 @@ int print(const enum flashrom_log_level level, const char *const fmt, ...)
 	return 0;
 }
 
-/** @} */ /* end flashrom-general */
+void flashrom_set_progress_callback(struct flashrom_flashctx *flashctx, flashrom_progress_callback *progress_callback, struct flashrom_progress *progress_state)
+{
+	flashctx->progress_callback = progress_callback;
+	flashctx->progress_state = progress_state;
+}
+/** @private */
+void update_progress(struct flashrom_flashctx *flashctx, enum flashrom_progress_stage stage, size_t current, size_t total)
+{
+	if (flashctx->progress_callback == NULL)
+		return;
+	if (current > total)
+		current = total;
 
+	flashctx->progress_state->stage = stage;
+	flashctx->progress_state->current = current;
+	flashctx->progress_state->total = total;
+	flashctx->progress_callback(flashctx);
+}
 
-
-/**
- * @defgroup flashrom-query Querying
- * @{
- */
-
-/**
- * @brief Returns flashrom version
- * @return flashrom version
- */
 const char *flashrom_version_info(void)
 {
 	return flashrom_version;
 }
 
-/**
- * @brief Returns list of supported flash chips
- * @return List of supported flash chips, or NULL if an error occurred
- */
 struct flashrom_flashchip_info *flashrom_supported_flash_chips(void)
 {
 	unsigned int i = 0;
@@ -143,10 +116,6 @@ struct flashrom_flashchip_info *flashrom_supported_flash_chips(void)
 	return supported_flashchips;
 }
 
-/**
- * @brief Returns list of supported mainboards
- * @return List of supported mainboards, or NULL if an error occurred
- */
 struct flashrom_board_info *flashrom_supported_boards(void)
 {
 #if CONFIG_INTERNAL == 1
@@ -180,10 +149,6 @@ struct flashrom_board_info *flashrom_supported_boards(void)
 #endif
 }
 
-/**
- * @brief Returns list of supported chipsets
- * @return List of supported chipsets, or NULL if an error occurred
- */
 struct flashrom_chipset_info *flashrom_supported_chipsets(void)
 {
 #if CONFIG_INTERNAL == 1
@@ -219,39 +184,12 @@ struct flashrom_chipset_info *flashrom_supported_chipsets(void)
 #endif
 }
 
-/**
- * @brief Frees memory allocated by libflashrom API
- * @param Pointer to block of memory which should be freed
- * @return 0 on success
- */
 int flashrom_data_free(void *const p)
 {
 	free(p);
 	return 0;
 }
 
-/** @} */ /* end flashrom-query */
-
-
-
-/**
- * @defgroup flashrom-prog Programmers
- * @{
- */
-
-/**
- * @brief Initialize the specified programmer.
- *
- * Currently, only one programmer may be initialized at a time.
- *
- * @param[out] flashprog Points to a pointer of type struct flashrom_programmer
- *                       that will be set if programmer initialization succeeds.
- *                       *flashprog has to be shutdown by the caller with @ref
- *                       flashrom_programmer_shutdown.
- * @param[in] prog_name Name of the programmer to initialize.
- * @param[in] prog_param Pointer to programmer specific parameters.
- * @return 0 on success
- */
 int flashrom_programmer_init(struct flashrom_programmer **const flashprog,
 			     const char *const prog_name, const char *const prog_param)
 {
@@ -269,12 +207,6 @@ int flashrom_programmer_init(struct flashrom_programmer **const flashprog,
 	return programmer_init(programmer_table[prog], prog_param);
 }
 
-/**
- * @brief Shut down the initialized programmer.
- *
- * @param flashprog The programmer to shut down.
- * @return 0 on success
- */
 int flashrom_programmer_shutdown(struct flashrom_programmer *const flashprog)
 {
 	return programmer_shutdown();
@@ -282,33 +214,6 @@ int flashrom_programmer_shutdown(struct flashrom_programmer *const flashprog)
 
 /* TODO: flashrom_programmer_capabilities()? */
 
-/** @} */ /* end flashrom-prog */
-
-
-
-/**
- * @defgroup flashrom-flash Flash chips
- * @{
- */
-
-/**
- * @brief Probe for a flash chip.
- *
- * Probes for a flash chip and returns a flash context, that can be used
- * later with flash chip and @ref flashrom-ops "image operations", if
- * exactly one matching chip is found.
- *
- * @param[out] flashctx Points to a pointer of type struct flashrom_flashctx
- *                      that will be set if exactly one chip is found. *flashctx
- *                      has to be freed by the caller with @ref flashrom_flash_release.
- * @param[in] flashprog The flash programmer used to access the chip.
- * @param[in] chip_name Name of a chip to probe for, or NULL to probe for
- *                      all known chips.
- * @return 0 on success,
- *         3 if multiple chips were found,
- *         2 if no chip was found,
- *         or 1 on any other error.
- */
 int flashrom_flash_probe(struct flashrom_flashctx **const flashctx,
 			 const struct flashrom_programmer *const flashprog,
 			 const char *const chip_name)
@@ -343,36 +248,21 @@ int flashrom_flash_probe(struct flashrom_flashctx **const flashctx,
 	return ret;
 }
 
-/**
- * @brief Returns the size of the specified flash chip in bytes.
- *
- * @param flashctx The queried flash context.
- * @return Size of flash chip in bytes.
- */
 size_t flashrom_flash_getsize(const struct flashrom_flashctx *const flashctx)
 {
 	return flashctx->chip->total_size * 1024;
 }
 
-/**
- * @brief Free a flash context.
- *
- * @param flashctx Flash context to free.
- */
 void flashrom_flash_release(struct flashrom_flashctx *const flashctx)
 {
+	if (!flashctx)
+		return;
+
 	flashrom_layout_release(flashctx->default_layout);
 	free(flashctx->chip);
 	free(flashctx);
 }
 
-/**
- * @brief Set a flag in the given flash context.
- *
- * @param flashctx Flash context to alter.
- * @param flag	   Flag that is to be set / cleared.
- * @param value	   Value to set.
- */
 void flashrom_flag_set(struct flashrom_flashctx *const flashctx,
 		       const enum flashrom_flag flag, const bool value)
 {
@@ -384,13 +274,6 @@ void flashrom_flag_set(struct flashrom_flashctx *const flashctx,
 	}
 }
 
-/**
- * @brief Return the current value of a flag in the given flash context.
- *
- * @param flashctx Flash context to read from.
- * @param flag	   Flag to be read.
- * @return Current value of the flag.
- */
 bool flashrom_flag_get(const struct flashrom_flashctx *const flashctx, const enum flashrom_flag flag)
 {
 	switch (flag) {
@@ -402,43 +285,13 @@ bool flashrom_flag_get(const struct flashrom_flashctx *const flashctx, const enu
 	}
 }
 
-/** @} */ /* end flashrom-flash */
-
-
-
-/**
- * @defgroup flashrom-layout Layout handling
- * @{
- */
-
-/**
- * @brief Read a layout from the Intel ICH descriptor in the flash.
- *
- * Optionally verify that the layout matches the one in the given
- * descriptor dump.
- *
- * @param[out] layout Points to a struct flashrom_layout pointer that
- *                    gets set if the descriptor is read and parsed
- *                    successfully.
- * @param[in] flashctx Flash context to read the descriptor from flash.
- * @param[in] dump     The descriptor dump to compare to or NULL.
- * @param[in] len      The length of the descriptor dump.
- *
- * @return 0 on success,
- *         6 if descriptor parsing isn't implemented for the host,
- *         5 if the descriptors don't match,
- *         4 if the descriptor dump couldn't be parsed,
- *         3 if the descriptor on flash couldn't be parsed,
- *         2 if the descriptor on flash couldn't be read,
- *         1 on any other error.
- */
 int flashrom_layout_read_from_ifd(struct flashrom_layout **const layout, struct flashctx *const flashctx,
 				  const void *const dump, const size_t len)
 {
 #ifndef __FLASHROM_LITTLE_ENDIAN__
 	return 6;
 #else
-	struct flashrom_layout *dump_layout, *chip_layout;
+	struct flashrom_layout *dump_layout = NULL, *chip_layout = NULL;
 	int ret = 1;
 
 	void *const desc = malloc(0x1000);
@@ -519,22 +372,8 @@ static int flashrom_layout_parse_fmap(struct flashrom_layout **layout,
 }
 #endif /* __FLASHROM_LITTLE_ENDIAN__ */
 
-/**
- * @brief Read a layout by searching the flash chip for fmap.
- *
- * @param[out] layout Points to a struct flashrom_layout pointer that
- *                    gets set if the fmap is read and parsed successfully.
- * @param[in] flashctx Flash context
- * @param[in] offset Offset to begin searching for fmap.
- * @param[in] offset Length of address space to search.
- *
- * @return 0 on success,
- *         3 if fmap parsing isn't implemented for the host,
- *         2 if the fmap couldn't be read,
- *         1 on any other error.
- */
 int flashrom_layout_read_fmap_from_rom(struct flashrom_layout **const layout,
-		struct flashctx *const flashctx, off_t offset, size_t len)
+		struct flashctx *const flashctx, size_t offset, size_t len)
 {
 #ifndef __FLASHROM_LITTLE_ENDIAN__
 	return 3;
@@ -559,20 +398,6 @@ int flashrom_layout_read_fmap_from_rom(struct flashrom_layout **const layout,
 #endif
 }
 
-/**
- * @brief Read a layout by searching buffer for fmap.
- *
- * @param[out] layout Points to a struct flashrom_layout pointer that
- *                    gets set if the fmap is read and parsed successfully.
- * @param[in] flashctx Flash context
- * @param[in] buffer Buffer to search in
- * @param[in] size Size of buffer to search
- *
- * @return 0 on success,
- *         3 if fmap parsing isn't implemented for the host,
- *         2 if the fmap couldn't be read,
- *         1 on any other error.
- */
 int flashrom_layout_read_fmap_from_buffer(struct flashrom_layout **const layout,
 		struct flashctx *const flashctx, const uint8_t *const buf, size_t size)
 {
@@ -605,18 +430,98 @@ _ret:
 #endif
 }
 
-/**
- * @brief Set the active layout for a flash context.
- *
- * Note: This just sets a pointer. The caller must not release the layout
- *       as long as he uses it through the given flash context.
- *
- * @param flashctx Flash context whose layout will be set.
- * @param layout   Layout to bet set.
- */
 void flashrom_layout_set(struct flashrom_flashctx *const flashctx, const struct flashrom_layout *const layout)
 {
 	flashctx->layout = layout;
 }
 
-/** @} */ /* end flashrom-layout */
+enum flashrom_wp_result flashrom_wp_cfg_new(struct flashrom_wp_cfg **cfg)
+{
+	*cfg = calloc(1, sizeof(**cfg));
+	return *cfg ? 0 : FLASHROM_WP_ERR_OTHER;
+}
+
+void flashrom_wp_cfg_release(struct flashrom_wp_cfg *cfg)
+{
+	free(cfg);
+}
+
+void flashrom_wp_set_mode(struct flashrom_wp_cfg *cfg, enum flashrom_wp_mode mode)
+{
+	cfg->mode = mode;
+}
+
+enum flashrom_wp_mode flashrom_wp_get_mode(const struct flashrom_wp_cfg *cfg)
+{
+	return cfg->mode;
+}
+
+void flashrom_wp_set_range(struct flashrom_wp_cfg *cfg, size_t start, size_t len)
+{
+	cfg->range.start = start;
+	cfg->range.len = len;
+}
+
+void flashrom_wp_get_range(size_t *start, size_t *len, const struct flashrom_wp_cfg *cfg)
+{
+	*start = cfg->range.start;
+	*len = cfg->range.len;
+}
+
+enum flashrom_wp_result flashrom_wp_write_cfg(struct flashctx *flash, const struct flashrom_wp_cfg *cfg)
+{
+	if (flash->mst->buses_supported & BUS_PROG && flash->mst->opaque.wp_write_cfg)
+		return flash->mst->opaque.wp_write_cfg(flash, cfg);
+
+	if (wp_operations_available(flash))
+		return wp_write_cfg(flash, cfg);
+
+	return FLASHROM_WP_ERR_OTHER;
+}
+
+enum flashrom_wp_result flashrom_wp_read_cfg(struct flashrom_wp_cfg *cfg, struct flashctx *flash)
+{
+	if (flash->mst->buses_supported & BUS_PROG && flash->mst->opaque.wp_read_cfg)
+		return flash->mst->opaque.wp_read_cfg(cfg, flash);
+
+	if (wp_operations_available(flash))
+		return wp_read_cfg(cfg, flash);
+
+	return FLASHROM_WP_ERR_OTHER;
+}
+
+enum flashrom_wp_result flashrom_wp_get_available_ranges(struct flashrom_wp_ranges **list, struct flashrom_flashctx *flash)
+{
+	if (flash->mst->buses_supported & BUS_PROG && flash->mst->opaque.wp_get_ranges)
+		return flash->mst->opaque.wp_get_ranges(list, flash);
+
+	if (wp_operations_available(flash))
+		return wp_get_available_ranges(list, flash);
+
+	return FLASHROM_WP_ERR_OTHER;
+}
+
+size_t flashrom_wp_ranges_get_count(const struct flashrom_wp_ranges *list)
+{
+	return list->count;
+}
+
+enum flashrom_wp_result flashrom_wp_ranges_get_range(size_t *start, size_t *len, const struct flashrom_wp_ranges *list, unsigned int index)
+{
+	if (index >= list->count)
+		return FLASHROM_WP_ERR_OTHER;
+
+	*start = list->ranges[index].start;
+	*len = list->ranges[index].len;
+
+	return 0;
+}
+
+void flashrom_wp_ranges_release(struct flashrom_wp_ranges *list)
+{
+	if (!list)
+		return;
+
+	free(list->ranges);
+	free(list);
+}

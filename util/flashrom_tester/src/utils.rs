@@ -44,6 +44,18 @@ pub enum LayoutNames {
     BottomQuad,
 }
 
+impl LayoutNames {
+    // Return a section that does not overlap
+    pub fn get_non_overlapping_section(&self) -> LayoutNames {
+        match self {
+            LayoutNames::TopQuad => LayoutNames::BottomQuad,
+            LayoutNames::TopHalf => LayoutNames::BottomHalf,
+            LayoutNames::BottomHalf => LayoutNames::TopHalf,
+            LayoutNames::BottomQuad => LayoutNames::TopQuad,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct LayoutSizes {
     half_sz: i64,
@@ -88,7 +100,7 @@ pub fn construct_layout_file<F: Write>(mut target: F, ls: &LayoutSizes) -> std::
 }
 
 pub fn toggle_hw_wp(dis: bool) -> Result<(), String> {
-    // The easist way to toggle the harware write-protect is
+    // The easist way to toggle the hardware write-protect is
     // to {dis}connect the battery (and/or open the WP screw).
     let s = if dis { "dis" } else { "" };
     info!("Prompt for hardware WP {}able", s);

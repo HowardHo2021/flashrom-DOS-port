@@ -36,13 +36,15 @@
 use super::cros_sysinfo;
 use super::tester::{self, OutputFormat, TestCase, TestEnv, TestResult};
 use super::utils::{self, LayoutNames};
-use flashrom::{FlashChip, Flashrom, FlashromCmd};
+use flashrom::{FlashChip, Flashrom};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
+use std::convert::TryInto;
+use std::fs::{self, File};
 use std::io::{BufRead, Write};
 use std::sync::atomic::AtomicBool;
 
 const LAYOUT_FILE: &'static str = "/tmp/layout.file";
+const ELOG_FILE: &'static str = "/tmp/elog.file";
 
 /// Iterate over tests, yielding only those tests with names matching filter_names.
 ///
@@ -78,16 +80,13 @@ fn filter_tests<'n, 't: 'n, T: TestCase>(
 /// tests are run. Provided names that don't match any known test will be logged
 /// as a warning.
 pub fn generic<'a, TN: Iterator<Item = &'a str>>(
-    path: &str,
+    cmd: &dyn Flashrom,
     fc: FlashChip,
     print_layout: bool,
     output_format: OutputFormat,
     test_names: Option<TN>,
     terminate_flag: Option<&AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let p = path.to_string();
-    let cmd = FlashromCmd { path: p, fc };
-
     utils::ac_power_warning();
 
     info!("Calculate ROM partition sizes & Create the layout file.");
@@ -142,18 +141,20 @@ pub fn generic<'a, TN: Iterator<Item = &'a str>>(
     };
     let tests = filter_tests(tests, &mut filter_names);
 
+    let chip_name = cmd
+        .name()
+        .map(|x| format!("vendor=\"{}\" name=\"{}\"", x.0, x.1))
+        .unwrap_or("<Unknown chip>".into());
+
     // ------------------------.
     // Run all the tests and collate the findings:
-    let results = tester::run_all_tests(fc, &cmd, tests, terminate_flag);
+    let results = tester::run_all_tests(fc, cmd, tests, terminate_flag);
 
     // Any leftover filtered names were specified to be run but don't exist
     for leftover in filter_names.iter().flatten() {
         warn!("No test matches filter name \"{}\"", leftover);
     }
 
-    let chip_name = flashrom::name(&cmd)
-        .map(|x| format!("vendor=\"{}\" name=\"{}\"", x.0, x.1))
-        .unwrap_or("<Unknown chip>".into());
     let os_rel = sys_info::os_release().unwrap_or("<Unknown OS>".to_string());
     let system_info = cros_sysinfo::system_info().unwrap_or("<Unknown System>".to_string());
     let bios_info = cros_sysinfo::bios_info().unwrap_or("<Unknown BIOS>".to_string());
@@ -170,7 +171,7 @@ pub fn generic<'a, TN: Iterator<Item = &'a str>>(
 
 fn get_device_name_test(env: &mut TestEnv) -> TestResult {
     // Success means we got something back, which is good enough.
-    flashrom::name(env.cmd)?;
+    env.cmd.name()?;
     Ok(())
 }
 
@@ -178,7 +179,7 @@ fn wp_toggle_test(env: &mut TestEnv) -> TestResult {
     // NOTE: This is not strictly a 'test' as it is allowed to fail on some platforms.
     //       However, we will warn when it does fail.
     // List the write-protected regions of flash.
-    match flashrom::wp_list(env.cmd) {
+    match env.cmd.wp_list() {
         Ok(list_str) => info!("\n{}", list_str),
         Err(e) => warn!("{}", e),
     };
@@ -234,25 +235,28 @@ fn lock_test(env: &mut TestEnv) -> TestResult {
 
 fn elog_sanity_test(env: &mut TestEnv) -> TestResult {
     // Check that the elog contains *something*, as an indication that Coreboot
-    // is actually able to write to the Flash. Because this invokes elogtool on
-    // the host, it doesn't make sense to run for other chips.
+    // is actually able to write to the Flash. This only makes sense for chips
+    // running Coreboot, which we assume is just host.
     if env.chip_type() != FlashChip::HOST {
         info!("Skipping ELOG sanity check for non-host chip");
         return Ok(());
     }
-    // elogtool reads the flash, it should be back in the golden state
+    // flash should be back in the golden state
     env.ensure_golden()?;
-    // Output is one event per line, drop empty lines in the interest of being defensive.
-    let event_count = cros_sysinfo::eventlog_list()?
-        .lines()
-        .filter(|l| !l.is_empty())
-        .count();
 
-    if event_count == 0 {
-        Err("ELOG contained no events".into())
-    } else {
-        Ok(())
+    const ELOG_RW_REGION_NAME: &str = "RW_ELOG";
+    env.cmd.read_region(ELOG_FILE, ELOG_RW_REGION_NAME)?;
+
+    // Just checking for the magic numer
+    // TODO: improve this test to read the events
+    if fs::metadata(ELOG_FILE)?.len() < 4 {
+        return Err("ELOG contained no data".into());
     }
+    let data = fs::read(ELOG_FILE)?;
+    if u32::from_be_bytes(data[0..4].try_into()?) != 0x474f4c45 {
+        return Err("ELOG had bad magic number".into());
+    }
+    Ok(())
 }
 
 fn host_is_chrome_test(_env: &mut TestEnv) -> TestResult {
@@ -285,19 +289,20 @@ fn partial_lock_test(section: LayoutNames) -> impl Fn(&mut TestEnv) -> TestResul
         // Need a clean image for verification
         env.ensure_golden()?;
 
-        let (name, start, len) = utils::layout_section(env.layout(), section);
+        let (wp_section_name, start, len) = utils::layout_section(env.layout(), section);
         // Disable software WP so we can do range protection, but hardware WP
         // must remain enabled for (most) range protection to do anything.
         env.wp.set_hw(false)?.set_sw(false)?;
-        flashrom::wp_range(env.cmd, (start, len), true)?;
+        env.cmd.wp_range((start, len), true)?;
         env.wp.set_hw(true)?;
 
+        // Check that we cannot write to the protected region.
         let rws = flashrom::ROMWriteSpecifics {
             layout_file: Some(LAYOUT_FILE),
             write_file: Some(env.random_data_file()),
-            name_file: Some(name),
+            name_file: Some(wp_section_name),
         };
-        if flashrom::write_file_with_layout(env.cmd, &rws).is_ok() {
+        if env.cmd.write_file_with_layout(&rws).is_ok() {
             return Err(
                 "Section should be locked, should not have been overwritable with random data"
                     .into(),
@@ -306,6 +311,17 @@ fn partial_lock_test(section: LayoutNames) -> impl Fn(&mut TestEnv) -> TestResul
         if !env.is_golden() {
             return Err("Section didn't lock, has been overwritten with random data!".into());
         }
+
+        // Check that we can write to the non protected region.
+        let (non_wp_section_name, _, _) =
+            utils::layout_section(env.layout(), section.get_non_overlapping_section());
+        let rws = flashrom::ROMWriteSpecifics {
+            layout_file: Some(LAYOUT_FILE),
+            write_file: Some(env.random_data_file()),
+            name_file: Some(non_wp_section_name),
+        };
+        env.cmd.write_file_with_layout(&rws)?;
+
         Ok(())
     }
 }

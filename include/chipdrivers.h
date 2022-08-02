@@ -41,6 +41,7 @@ int spi_block_erase_20(struct flashctx *flash, unsigned int addr, unsigned int b
 int spi_block_erase_21(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
 int spi_block_erase_50(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
 int spi_block_erase_52(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
+int spi_block_erase_53(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
 int spi_block_erase_5c(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
 int spi_block_erase_60(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
 int spi_block_erase_62(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
@@ -52,6 +53,7 @@ int spi_block_erase_d8(struct flashctx *flash, unsigned int addr, unsigned int b
 int spi_block_erase_db(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
 int spi_block_erase_dc(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
 erasefunc_t *spi_get_erasefn_from_opcode(uint8_t opcode);
+uint8_t spi_get_opcode_from_erasefn(erasefunc_t *func);
 int spi_chip_write_1(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 int spi_nbyte_read(struct flashctx *flash, unsigned int addr, uint8_t *bytes, unsigned int len);
 int spi_read_chunked(struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len, unsigned int chunksize);
@@ -62,8 +64,8 @@ int spi_set_extended_address(struct flashctx *, uint8_t addr_high);
 
 
 /* spi25_statusreg.c */
-uint8_t spi_read_status_register(const struct flashctx *flash);
-int spi_write_status_register(const struct flashctx *flash, int status);
+int spi_read_register(const struct flashctx *flash, enum flash_reg reg, uint8_t *value);
+int spi_write_register(const struct flashctx *flash, enum flash_reg reg, uint8_t value);
 void spi_prettyprint_status_register_bit(uint8_t status, int bit);
 int spi_prettyprint_status_register_plain(struct flashctx *flash);
 int spi_prettyprint_status_register_default_welwip(struct flashctx *flash);
@@ -201,9 +203,6 @@ int erase_sector_stm50(struct flashctx *flash, unsigned int block, unsigned int 
 int probe_en29lv640b(struct flashctx *flash);
 int write_en29lv640b(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 
-/* dummyflasher.c */
-int probe_variable_size(struct flashctx *flash);
-
 /* edi.c */
 int edi_chip_block_erase(struct flashctx *flash, unsigned int page, unsigned int size);
 int edi_chip_write(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
@@ -213,5 +212,8 @@ int edi_probe_kb9012(struct flashctx *flash);
 /* spi95.c */
 int probe_spi_st95(struct flashctx *flash);
 int spi_block_erase_emulation(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
+
+/* writeprotect_ranges.c */
+void decode_range_spi25(size_t *start, size_t *len, const struct wp_bits *, size_t chip_len);
 
 #endif /* !__CHIPDRIVERS_H__ */

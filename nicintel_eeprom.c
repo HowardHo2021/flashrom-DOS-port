@@ -69,7 +69,6 @@
 #define EEWR_ADDR 2
 #define EEWR_DATA 16
 
-#define BIT(x) (1<<x)
 #define EE_PAGE_MASK 0x3f
 
 static uint8_t *nicintel_eebar;
@@ -443,19 +442,19 @@ out:
 }
 
 static const struct opaque_master opaque_master_nicintel_ee_82580 = {
-	.probe = nicintel_ee_probe_82580,
-	.read = nicintel_ee_read,
-	.write = nicintel_ee_write_82580,
-	.erase = nicintel_ee_erase_82580,
-	.shutdown = nicintel_ee_shutdown_82580,
+	.probe		= nicintel_ee_probe_82580,
+	.read		= nicintel_ee_read,
+	.write		= nicintel_ee_write_82580,
+	.erase		= nicintel_ee_erase_82580,
+	.shutdown	= nicintel_ee_shutdown_82580,
 };
 
 static const struct opaque_master opaque_master_nicintel_ee_i210 = {
-	.probe = nicintel_ee_probe_i210,
-	.read = nicintel_ee_read,
-	.write = nicintel_ee_write_i210,
-	.erase = nicintel_ee_erase_i210,
-	.shutdown = nicintel_ee_shutdown_i210,
+	.probe		= nicintel_ee_probe_i210,
+	.read		= nicintel_ee_read,
+	.write		= nicintel_ee_write_i210,
+	.erase		= nicintel_ee_erase_i210,
+	.shutdown	= nicintel_ee_shutdown_i210,
 };
 
 static int nicintel_ee_init(void)

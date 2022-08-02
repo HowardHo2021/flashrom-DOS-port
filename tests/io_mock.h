@@ -34,17 +34,16 @@
 /* Required for `FILE *` */
 #include <stdio.h>
 
-/*
- * Explicitly including the header because some tests are using libusb structs
- * in depth, opaque symbols are not sufficient.
- */
-#include <libusb.h>
+#include <stdint.h>
+
+#include "usb_unittests.h"
 
 /* Address value needs fit into uint8_t. */
 #define USB_DEVICE_ADDRESS 19
 
 /* Define struct pci_dev to avoid dependency on pci.h */
 struct pci_dev {
+	char padding[18];
 	unsigned int device_id;
 };
 
@@ -58,6 +57,15 @@ struct pci_dev {
 
 /* Always return success for tests. */
 #define S_ISREG(x) 0
+
+/* Maximum number of open calls to mock. This number is arbitrary. */
+#define MAX_MOCK_OPEN 4
+
+struct io_mock_fallback_open_state {
+	unsigned int noc;
+	const char *paths[MAX_MOCK_OPEN];
+	int flags[MAX_MOCK_OPEN];
+};
 
 struct io_mock {
 	void *state;
@@ -102,7 +110,14 @@ struct io_mock {
 	FILE* (*fopen)(void *state, const char *pathname, const char *mode);
 	char* (*fgets)(void *state, char *buf, int len, FILE *fp);
 	size_t (*fread)(void *state, void *buf, size_t size, size_t len, FILE *fp);
+	int (*fprintf)(void *state, FILE *fp, const char *fmt, va_list args);
 	int (*fclose)(void *state, FILE *fp);
+
+	/*
+	 * An alternative to custom open mock. A test can either register its
+	 * own mock open function or fallback_open_state.
+	 */
+	struct io_mock_fallback_open_state *fallback_open_state;
 };
 
 void io_mock_register(const struct io_mock *io);

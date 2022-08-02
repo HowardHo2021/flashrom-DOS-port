@@ -338,6 +338,7 @@ static const struct spi_master spi_master_digilent_spi = {
 	.write_256	= default_spi_write_256,
 	.write_aai	= default_spi_write_aai,
 	.shutdown	= digilent_spi_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static bool default_reset(struct libusb_device_handle *handle)
@@ -407,7 +408,7 @@ static int digilent_spi_init(void)
 		goto close_handle;
 	}
 
-	p = extract_programmer_param("spispeed");
+	p = extract_programmer_param_str("spispeed");
 	if (p) {
 		for (i = 0; spispeeds[i].name; ++i) {
 			if (!strcasecmp(spispeeds[i].name, p)) {
@@ -423,7 +424,7 @@ static int digilent_spi_init(void)
 		free(p);
 	}
 
-	p = extract_programmer_param("reset");
+	p = extract_programmer_param_str("reset");
 	if (p && strlen(p))
 		reset_board = (p[0] == '1');
 	else

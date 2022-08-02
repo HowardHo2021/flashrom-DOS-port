@@ -16,6 +16,7 @@
 #include <include/test.h>
 #include "io_mock.h"
 #include "tests.h"
+#include "wraps.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -74,20 +75,43 @@ uint8_t __wrap_sio_read(uint16_t port, uint8_t reg)
 	return (uint8_t)mock();
 }
 
+static int mock_open(const char *pathname, int flags)
+{
+	if (get_io() && get_io()->open)
+		return get_io()->open(get_io()->state, pathname, flags);
+
+	if (get_io() && get_io()->fallback_open_state) {
+		struct io_mock_fallback_open_state *io_state;
+		unsigned int open_state_flags;
+
+		io_state = get_io()->fallback_open_state;
+		assert_true(io_state->noc < MAX_MOCK_OPEN);
+		assert_non_null(io_state->paths[io_state->noc]);
+		assert_string_equal(pathname, io_state->paths[io_state->noc]);
+		open_state_flags = io_state->flags[io_state->noc];
+		assert_int_equal(flags & open_state_flags, open_state_flags);
+		io_state->noc++; // proceed to the next path upon next call.
+	}
+
+	return MOCK_FD;
+}
+
 int __wrap_open(const char *pathname, int flags)
 {
 	LOG_ME;
-	if (get_io() && get_io()->open)
-		return get_io()->open(get_io()->state, pathname, flags);
-	return NON_ZERO;
+	return mock_open(pathname, flags);
 }
 
 int __wrap_open64(const char *pathname, int flags)
 {
 	LOG_ME;
-	if (get_io() && get_io()->open)
-		return get_io()->open(get_io()->state, pathname, flags);
-	return NON_ZERO;
+	return mock_open(pathname, flags);
+}
+
+int __wrap___open64_2(const char *pathname, int flags)
+{
+	LOG_ME;
+	return mock_open(pathname, flags);
 }
 
 int __wrap_ioctl(int fd, unsigned long int request, ...)
@@ -198,6 +222,14 @@ char *__wrap_fgets(char *buf, int len, FILE *fp)
 	return NULL;
 }
 
+char *__wrap___fgets_chk(char *buf, int len, FILE *fp)
+{
+	LOG_ME;
+	if (get_io() && get_io()->fgets)
+		return get_io()->fgets(get_io()->state, buf, len, fp);
+	return NULL;
+}
+
 size_t __wrap_fread(void *ptr, size_t size, size_t nmemb, FILE *fp)
 {
 	LOG_ME;
@@ -236,6 +268,28 @@ int __wrap_setvbuf(FILE *fp, char *buf, int type, size_t size)
 	return 0;
 }
 
+int __wrap_fprintf(FILE *fp, const char *fmt, ...)
+{
+	LOG_ME;
+	if (get_io() && get_io()->fprintf) {
+		va_list args;
+		int out;
+		va_start(args, fmt);
+		out = get_io()->fprintf(get_io()->state, fp, fmt, args);
+		va_end(args);
+		return out;
+	}
+	return 0;
+}
+
+int __wrap___vfprintf_chk(FILE *fp, const char *fmt, va_list args)
+{
+	LOG_ME;
+	if (get_io() && get_io()->fprintf)
+		return get_io()->fprintf(get_io()->state, fp, fmt, args);
+	return 0;
+}
+
 int __wrap_fclose(FILE *fp)
 {
 	LOG_ME;
@@ -267,14 +321,14 @@ int __wrap_rget_io_perms(void)
 	return 0;
 }
 
-void __wrap_test_outb(unsigned char value, unsigned short port)
+void __wrap_OUTB(unsigned char value, unsigned short port)
 {
 	/* LOG_ME; */
 	if (get_io() && get_io()->outb)
 		get_io()->outb(get_io()->state, value, port);
 }
 
-unsigned char __wrap_test_inb(unsigned short port)
+unsigned char __wrap_INB(unsigned short port)
 {
 	/* LOG_ME; */
 	if (get_io() && get_io()->inb)
@@ -282,14 +336,14 @@ unsigned char __wrap_test_inb(unsigned short port)
 	return 0;
 }
 
-void __wrap_test_outw(unsigned short value, unsigned short port)
+void __wrap_OUTW(unsigned short value, unsigned short port)
 {
 	/* LOG_ME; */
 	if (get_io() && get_io()->outw)
 		get_io()->outw(get_io()->state, value, port);
 }
 
-unsigned short __wrap_test_inw(unsigned short port)
+unsigned short __wrap_INW(unsigned short port)
 {
 	/* LOG_ME; */
 	if (get_io() && get_io()->inw)
@@ -297,14 +351,14 @@ unsigned short __wrap_test_inw(unsigned short port)
 	return 0;
 }
 
-void __wrap_test_outl(unsigned int value, unsigned short port)
+void __wrap_OUTL(unsigned int value, unsigned short port)
 {
 	/* LOG_ME; */
 	if (get_io() && get_io()->outl)
 		get_io()->outl(get_io()->state, value, port);
 }
 
-unsigned int __wrap_test_inl(unsigned short port)
+unsigned int __wrap_INL(unsigned short port)
 {
 	/* LOG_ME; */
 	if (get_io() && get_io()->inl)
@@ -312,9 +366,12 @@ unsigned int __wrap_test_inl(unsigned short port)
 	return 0;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
 	int ret = 0;
+
+	if (argc > 1)
+		cmocka_set_test_filter(argv[1]);
 
 	cmocka_set_message_output(CM_OUTPUT_STDOUT);
 
@@ -337,6 +394,7 @@ int main(void)
 	const struct CMUnitTest spi25_tests[] = {
 		cmocka_unit_test(spi_write_enable_test_success),
 		cmocka_unit_test(spi_write_disable_test_success),
+		cmocka_unit_test(spi_read_chunked_test_success),
 		cmocka_unit_test(probe_spi_rdid_test_success),
 		cmocka_unit_test(probe_spi_rdid4_test_success),
 		cmocka_unit_test(probe_spi_rems_test_success),
@@ -348,16 +406,18 @@ int main(void)
 	};
 	ret |= cmocka_run_group_tests_name("spi25.c tests", spi25_tests, NULL, NULL);
 
-	const struct CMUnitTest init_shutdown_tests[] = {
-		cmocka_unit_test(dummy_init_and_shutdown_test_success),
-		cmocka_unit_test(nicrealtek_init_and_shutdown_test_success),
-		cmocka_unit_test(raiden_debug_init_and_shutdown_test_success),
-		cmocka_unit_test(dediprog_init_and_shutdown_test_success),
-		cmocka_unit_test(linux_mtd_init_and_shutdown_test_success),
-		cmocka_unit_test(linux_spi_init_and_shutdown_test_success),
-		cmocka_unit_test(realtek_mst_init_and_shutdown_test_success),
+	const struct CMUnitTest lifecycle_tests[] = {
+		cmocka_unit_test(dummy_basic_lifecycle_test_success),
+		cmocka_unit_test(dummy_probe_lifecycle_test_success),
+		cmocka_unit_test(dummy_probe_variable_size_test_success),
+		cmocka_unit_test(nicrealtek_basic_lifecycle_test_success),
+		cmocka_unit_test(raiden_debug_basic_lifecycle_test_success),
+		cmocka_unit_test(dediprog_basic_lifecycle_test_success),
+		cmocka_unit_test(linux_mtd_probe_lifecycle_test_success),
+		cmocka_unit_test(linux_spi_probe_lifecycle_test_success),
+		cmocka_unit_test(realtek_mst_basic_lifecycle_test_success),
 	};
-	ret |= cmocka_run_group_tests_name("init_shutdown.c tests", init_shutdown_tests, NULL, NULL);
+	ret |= cmocka_run_group_tests_name("lifecycle.c tests", lifecycle_tests, NULL, NULL);
 
 	const struct CMUnitTest layout_tests[] = {
 		cmocka_unit_test(included_regions_dont_overlap_test_success),
@@ -376,8 +436,20 @@ int main(void)
 		cmocka_unit_test(read_chip_with_dummyflasher_test_success),
 		cmocka_unit_test(write_chip_test_success),
 		cmocka_unit_test(write_chip_with_dummyflasher_test_success),
+		cmocka_unit_test(verify_chip_test_success),
+		cmocka_unit_test(verify_chip_with_dummyflasher_test_success),
 	};
 	ret |= cmocka_run_group_tests_name("chip.c tests", chip_tests, NULL, NULL);
+
+	const struct CMUnitTest chip_wp_tests[] = {
+		cmocka_unit_test(invalid_wp_range_dummyflasher_test_success),
+		cmocka_unit_test(set_wp_range_dummyflasher_test_success),
+		cmocka_unit_test(switch_wp_mode_dummyflasher_test_success),
+		cmocka_unit_test(wp_init_from_status_dummyflasher_test_success),
+		cmocka_unit_test(full_chip_erase_with_wp_dummyflasher_test_success),
+		cmocka_unit_test(partial_chip_erase_with_wp_dummyflasher_test_success),
+	};
+	ret |= cmocka_run_group_tests_name("chip_wp.c tests", chip_wp_tests, NULL, NULL);
 
 	return ret;
 }

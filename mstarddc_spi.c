@@ -138,14 +138,15 @@ static int mstarddc_spi_send_command(const struct flashctx *flash,
 }
 
 static const struct spi_master spi_master_mstarddc = {
-	.max_data_read = 256,
-	.max_data_write = 256,
-	.command = mstarddc_spi_send_command,
-	.multicommand = default_spi_send_multicommand,
-	.read = default_spi_read,
-	.write_256 = default_spi_write_256,
-	.write_aai = default_spi_write_aai,
-	.shutdown = mstarddc_spi_shutdown,
+	.max_data_read	= 256,
+	.max_data_write	= 256,
+	.command	= mstarddc_spi_send_command,
+	.multicommand	= default_spi_send_multicommand,
+	.read		= default_spi_read,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
+	.shutdown	= mstarddc_spi_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 /* Returns 0 upon success, a negative number upon errors. */
@@ -158,7 +159,7 @@ static int mstarddc_spi_init(void)
 	struct mstarddc_spi_data *mstarddc_data;
 
 	// Get device, address from command-line
-	char *i2c_device = extract_programmer_param("dev");
+	char *i2c_device = extract_programmer_param_str("dev");
 	if (i2c_device != NULL && strlen(i2c_device) > 0) {
 		char *i2c_address = strchr(i2c_device, ':');
 		if (i2c_address != NULL) {
@@ -181,7 +182,7 @@ static int mstarddc_spi_init(void)
 	msg_pinfo("Info: Will try to use device %s and address 0x%02x.\n", i2c_device, mstarddc_addr);
 
 	// Get noreset=1 option from command-line
-	char *noreset = extract_programmer_param("noreset");
+	char *noreset = extract_programmer_param_str("noreset");
 	if (noreset != NULL && noreset[0] == '1')
 		mstarddc_doreset = 0;
 	free(noreset);

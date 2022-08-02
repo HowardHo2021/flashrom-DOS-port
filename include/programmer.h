@@ -75,7 +75,7 @@ extern const struct programmer_entry programmer_it8212;
 extern const struct programmer_entry programmer_jlink_spi;
 extern const struct programmer_entry programmer_linux_mtd;
 extern const struct programmer_entry programmer_linux_spi;
-extern const struct programmer_entry programmer_lspcon_i2c_spi;
+extern const struct programmer_entry programmer_parade_lspcon;
 extern const struct programmer_entry programmer_mediatek_i2c_spi;
 extern const struct programmer_entry programmer_mstarddc_spi;
 extern const struct programmer_entry programmer_ni845x_spi;
@@ -115,8 +115,8 @@ struct bitbang_spi_master {
 	unsigned int half_period;
 };
 
-#if NEED_PCI == 1
 struct pci_dev;
+struct pci_filter;
 
 /* pcidev.c */
 // FIXME: This needs to be local, not global(?)
@@ -124,6 +124,11 @@ extern struct pci_access *pacc;
 int pci_init_common(void);
 uintptr_t pcidev_readbar(struct pci_dev *dev, int bar);
 struct pci_dev *pcidev_init(const struct dev_entry *devs, int bar);
+struct pci_dev *pcidev_scandev(struct pci_filter *filter, struct pci_dev *start);
+struct pci_dev *pcidev_getdevfn(struct pci_dev *dev, const int func);
+struct pci_dev *pcidev_find_vendorclass(uint16_t vendor, uint16_t devclass);
+struct pci_dev *pcidev_card_find(uint16_t vendor, uint16_t device, uint16_t card_vendor, uint16_t card_device);
+struct pci_dev *pcidev_find(uint16_t vendor, uint16_t device);
 /* rpci_write_* are reversible writes. The original PCI config space register
  * contents will be restored on shutdown.
  * To clone the pci_dev instances internally, the `pacc` global
@@ -135,7 +140,6 @@ struct pci_dev *pcidev_init(const struct dev_entry *devs, int bar);
 int rpci_write_byte(struct pci_dev *dev, int reg, uint8_t data);
 int rpci_write_word(struct pci_dev *dev, int reg, uint16_t data);
 int rpci_write_long(struct pci_dev *dev, int reg, uint32_t data);
-#endif
 
 #if CONFIG_INTERNAL == 1
 struct penable {
@@ -239,8 +243,8 @@ int cb_check_image(const uint8_t *bios, unsigned int size);
 
 /* dmi.c */
 #if defined(__i386__) || defined(__x86_64__)
-extern int has_dmi_support;
 void dmi_init(void);
+bool dmi_is_supported(void);
 int dmi_match(const char *pattern);
 #endif // defined(__i386__) || defined(__x86_64__)
 
@@ -256,12 +260,7 @@ extern int superio_count;
 #define SUPERIO_VENDOR_ITE	0x1
 #define SUPERIO_VENDOR_WINBOND	0x2
 #endif
-#if NEED_PCI == 1
-struct pci_dev *pci_dev_find_vendorclass(uint16_t vendor, uint16_t devclass);
-struct pci_dev *pci_dev_find(uint16_t vendor, uint16_t device);
-struct pci_dev *pci_card_find(uint16_t vendor, uint16_t device,
-			      uint16_t card_vendor, uint16_t card_device);
-#endif
+
 #if CONFIG_INTERNAL == 1
 extern int is_laptop;
 extern int laptop_ok;
@@ -288,7 +287,7 @@ extern struct decode_sizes max_rom_decode;
 extern int programmer_may_write;
 extern unsigned long flashbase;
 unsigned int count_max_decode_exceedings(const struct flashctx *flash);
-char *extract_programmer_param(const char *param_name);
+char *extract_programmer_param_str(const char *param_name);
 
 /* spi.c */
 #define MAX_DATA_UNSPECIFIED 0
@@ -312,6 +311,7 @@ struct spi_master {
 	int (*write_256)(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 	int (*write_aai)(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 	int (*shutdown)(void *data);
+	bool (*probe_opcode)(struct flashctx *flash, uint8_t opcode);
 	void *data;
 };
 
@@ -321,6 +321,7 @@ int default_spi_send_multicommand(const struct flashctx *flash, struct spi_comma
 int default_spi_read(struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
 int default_spi_write_256(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 int default_spi_write_aai(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
+bool default_spi_probe_opcode(struct flashctx *flash, uint8_t opcode);
 int register_spi_master(const struct spi_master *mst, void *data);
 
 /* The following enum is needed by ich_descriptor_tool and ich* code as well as in chipset_enable.c. */
@@ -350,8 +351,11 @@ enum ich_chipset {
 	CHIPSET_300_SERIES_CANNON_POINT,
 	CHIPSET_400_SERIES_COMET_POINT,
 	CHIPSET_500_SERIES_TIGER_POINT,
+	CHIPSET_600_SERIES_ALDER_POINT,
+	CHIPSET_METEOR_LAKE,
 	CHIPSET_APOLLO_LAKE,
 	CHIPSET_GEMINI_LAKE,
+	CHIPSET_JASPER_LAKE,
 	CHIPSET_ELKHART_LAKE,
 };
 
@@ -362,9 +366,6 @@ int via_init_spi(uint32_t mmio_base);
 
 /* amd_imc.c */
 int amd_imc_shutdown(struct pci_dev *dev);
-
-/* it85spi.c */
-int it85xx_spi_init(struct superio s);
 
 /* it87spi.c */
 void enter_conf_mode_ite(uint16_t port);
@@ -400,6 +401,17 @@ struct opaque_master {
 	int (*read) (struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
 	int (*write) (struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 	int (*erase) (struct flashctx *flash, unsigned int blockaddr, unsigned int blocklen);
+	/*
+	 * Callbacks for accessing flash registers. An opaque programmer must
+	 * provide these functions for writeprotect operations to be available,
+	 * unless it provides custom wp operations instead.
+	 */
+	int (*read_register)(const struct flashctx *flash, enum flash_reg reg, uint8_t *value);
+	int (*write_register)(const struct flashctx *flash, enum flash_reg reg, uint8_t value);
+	/* Callbacks for overiding default writeprotect operations with custom ones. */
+	enum flashrom_wp_result (*wp_write_cfg)(struct flashctx *, const struct flashrom_wp_cfg *);
+	enum flashrom_wp_result (*wp_read_cfg)(struct flashrom_wp_cfg *, struct flashctx *);
+	enum flashrom_wp_result (*wp_get_ranges)(struct flashrom_wp_ranges **, struct flashctx *);
 	int (*shutdown)(void *data);
 	void *data;
 };

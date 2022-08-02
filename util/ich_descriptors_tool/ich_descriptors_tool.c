@@ -46,7 +46,6 @@ static const char *const region_names[] = {
 static void dump_file(const char *prefix, const uint32_t *dump, unsigned int len,
 		      const struct ich_desc_region *const reg, unsigned int i)
 {
-	int ret;
 	char *fn;
 	const char *reg_name;
 	uint32_t file_len;
@@ -85,8 +84,8 @@ static void dump_file(const char *prefix, const uint32_t *dump, unsigned int len
 	}
 	free(fn);
 
-	ret = write(fh, &dump[base >> 2], file_len);
-	if (ret != file_len) {
+	const ssize_t ret = write(fh, &dump[base >> 2], file_len);
+	if (ret < 0 || ((size_t) ret) != file_len) {
 		fprintf(stderr, "FAILED.\n");
 		exit(1);
 	}
@@ -128,6 +127,8 @@ static void usage(char *argv[], const char *error)
 "\t- \"silvermont\" for chipsets from Intel's Silvermont architecture (e.g. Bay Trail),\n"
 "\t- \"apollo\" for Intel's Apollo Lake SoC.\n"
 "\t- \"gemini\" for Intel's Gemini Lake SoC.\n"
+"\t- \"jasper\" for Intel's Jasper Lake SoC.\n"
+"\t- \"meteor\" for Intel's Meteor Lake SoC.\n"
 "\t- \"5\" or \"ibex\" for Intel's 5 series chipsets,\n"
 "\t- \"6\" or \"cougar\" for Intel's 6 series chipsets,\n"
 "\t- \"7\" or \"panther\" for Intel's 7 series chipsets.\n"
@@ -137,6 +138,7 @@ static void usage(char *argv[], const char *error)
 "\t- \"300\" or \"cannon\" for Intel's 300 series chipsets.\n"
 "\t- \"400\" or \"comet\" for Intel's 400 series chipsets.\n"
 "\t- \"500\" or \"tiger\" for Intel's 500 series chipsets.\n"
+"\t- \"600\" or \"alder\" for Intel's 600 series chipsets.\n"
 "If '-d' is specified some regions such as the BIOS image as seen by the CPU or\n"
 "the GbE blob that is required to initialize the GbE are also dumped to files.\n",
 	argv[0], argv[0]);
@@ -234,12 +236,18 @@ int main(int argc, char *argv[])
 		else if ((strcmp(csn, "500") == 0) ||
 			 (strcmp(csn, "tiger") == 0))
 			cs = CHIPSET_500_SERIES_TIGER_POINT;
+		else if (strcmp(csn, "600") == 0)
+			cs = CHIPSET_600_SERIES_ALDER_POINT;
 		else if (strcmp(csn, "apollo") == 0)
 			cs = CHIPSET_APOLLO_LAKE;
 		else if (strcmp(csn, "gemini") == 0)
 			cs = CHIPSET_GEMINI_LAKE;
+		else if (strcmp(csn, "jasper") == 0)
+			cs = CHIPSET_JASPER_LAKE;
 		else if (strcmp(csn, "elkhart") == 0)
 			cs = CHIPSET_ELKHART_LAKE;
+		else if (strcmp(csn, "meteor") == 0)
+			cs = CHIPSET_METEOR_LAKE;
 	}
 
 	ret = read_ich_descriptors_from_dump(buf, len, &cs, &desc);
@@ -261,7 +269,8 @@ int main(int argc, char *argv[])
 	prettyprint_ich_descriptors(cs, &desc);
 
 	pMAC = (uint8_t *) &buf[ICH_FREG_BASE(desc.region.FLREGs[3]) >> 2];
-	if (len >= ICH_FREG_BASE(desc.region.FLREGs[3]) + 6 && pMAC[0] != 0xff)
+	/* The case len < 0 is handled above as error. At this point len is non-negative. */
+	if (((size_t) len) >= ICH_FREG_BASE(desc.region.FLREGs[3]) + 6 && pMAC[0] != 0xff)
 		printf("The MAC address might be at offset 0x%x: "
 		       "%02x:%02x:%02x:%02x:%02x:%02x\n",
 		       ICH_FREG_BASE(desc.region.FLREGs[3]),

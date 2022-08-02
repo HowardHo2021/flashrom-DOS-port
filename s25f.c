@@ -18,7 +18,7 @@
 /*
  * s25f.c - Helper functions for Spansion S25FL and S25FS SPI flash chips.
  * Uses 24 bit addressing for the FS chips and 32 bit addressing for the FL
- * chips (which is required by the overlayed sector size devices).
+ * chips (which is required by the overlaid sector size devices).
  * TODO: Implement fancy hybrid sector architecture helpers.
  */
 
@@ -26,7 +26,6 @@
 
 #include "chipdrivers.h"
 #include "spi.h"
-#include "writeprotect.h"
 
 /*
  * RDAR and WRAR are supported on chips which have more than one set of status
@@ -135,9 +134,14 @@ static int s25fs_software_reset(struct flashctx *flash)
 
 static int s25f_poll_status(const struct flashctx *flash)
 {
-	uint8_t tmp = spi_read_status_register(flash);
+	while (true) {
+		uint8_t tmp;
+		if (spi_read_register(flash, STATUS1, &tmp))
+			return -1;
 
-	while (tmp & SPI_SR_WIP) {
+		if ((tmp & SPI_SR_WIP) == 0)
+			break;
+
 		/*
 		 * The WIP bit on S25F chips remains set to 1 if erase or
 		 * programming errors occur, so we must check for those
@@ -158,7 +162,6 @@ static int s25f_poll_status(const struct flashctx *flash)
 		}
 
 		programmer_delay(1000 * 10);
-		tmp = spi_read_status_register(flash);
 	}
 
 	return 0;
@@ -366,7 +369,7 @@ int probe_spi_big_spansion(struct flashctx *flash)
 	 *       04h     00h       FS: 256-kB physical sectors
 	 *       04h     01h       FS: 64-kB physical sectors
 	 *       04h     00h       FL: 256-kB physical sectors
-	 *       04h     01h       FL: Mix of 64-kB and 4KB overlayed sectors
+	 *       04h     01h       FL: Mix of 64-kB and 4KB overlaid sectors
 	 *       05h     80h       FL family
 	 *       05h     81h       FS family
 	 *

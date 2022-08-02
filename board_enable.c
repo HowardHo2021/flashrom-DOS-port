@@ -782,7 +782,7 @@ static int via_vt823x_gpio_set(uint8_t gpio, int raise)
 	uint16_t base;
 	uint8_t val, bit, offset;
 
-	dev = pci_dev_find_vendorclass(0x1106, 0x0601);
+	dev = pcidev_find_vendorclass(0x1106, 0x0601);
 	switch (dev->device_id) {
 	case 0x3177:	/* VT8235 */
 	case 0x3227:	/* VT8237/VT8237R */
@@ -893,7 +893,7 @@ static int board_asus_p3b_f(void)
 	uint16_t smbba;
 	uint8_t b;
 
-	dev = pci_dev_find(0x8086, 0x7113); /* Intel PIIX4, PM/SMBus function. */
+	dev = pcidev_find(0x8086, 0x7113); /* Intel PIIX4, PM/SMBus function. */
 	if (!dev) {
 		msg_perr("\nERROR: Intel PIIX4 PM not found.\n");
 		return -1;
@@ -910,7 +910,7 @@ static int board_asus_p3b_f(void)
 	/* Wait until SMBus transaction is complete. */
 	b = 0x1;
 	while (b & 0x01) {
-		b = INB(0x80);
+		INB(0x80);
 		b = INB(smbba);
 	}
 
@@ -1045,7 +1045,7 @@ static int board_ecs_geforce6100sm_m(void)
 	struct pci_dev *dev;
 	uint32_t tmp;
 
-	dev = pci_dev_find(0x10DE, 0x03EB);     /* NVIDIA MCP61 SMBus. */
+	dev = pcidev_find(0x10DE, 0x03EB);     /* NVIDIA MCP61 SMBus. */
 	if (!dev) {
 		msg_perr("\nERROR: NVIDIA MCP61 SMBus not found.\n");
 		return -1;
@@ -1073,7 +1073,7 @@ static int nvidia_mcp_gpio_set(int gpio, int raise)
 	}
 
 	/* Check for the ISA bridge first. */
-	dev = pci_dev_find_vendorclass(0x10DE, 0x0601);
+	dev = pcidev_find_vendorclass(0x10DE, 0x0601);
 	switch (dev->device_id) {
 	case 0x0030: /* CK804 */
 	case 0x0050: /* MCP04 */
@@ -1094,15 +1094,7 @@ static int nvidia_mcp_gpio_set(int gpio, int raise)
 			return -1;
 		}
 
-#if !defined(OLD_PCI_GET_DEV)
-		dev = pci_get_dev(pacc, dev->domain, dev->bus, dev->dev, 1);
-#else
-		/* pciutils/libpci before version 2.2 is too old to support
-		 * PCI domains. Such old machines usually don't have domains
-		 * besides domain 0, so this is not a problem.
-		 */
-		dev = pci_get_dev(pacc, dev->bus, dev->dev, 1);
-#endif
+		dev = pcidev_getdevfn(dev, 1);
 		if (!dev) {
 			msg_perr("MCP SMBus controller could not be found\n");
 			return -1;
@@ -1281,7 +1273,7 @@ static int board_sun_ultra_40_m2(void)
 	if (ret)
 		return ret;
 
-	dev = pci_dev_find(0x10de, 0x0364); /* NVIDIA MCP55 LPC bridge */
+	dev = pcidev_find(0x10de, 0x0364); /* NVIDIA MCP55 LPC bridge */
 	if (!dev) {
 		msg_perr("\nERROR: NVIDIA MCP55 LPC bridge not found.\n");
 		return -1;
@@ -1318,10 +1310,10 @@ static int board_artecgroup_dbe6x(void)
 	unsigned long boot_loc;
 
 	/* Geode only has a single core */
-	if (setup_cpu_msr(0))
+	if (msr_setup(0))
 		return -1;
 
-	msr = rdmsr(DBE6x_MSR_DIVIL_BALL_OPTS);
+	msr = msr_read(DBE6x_MSR_DIVIL_BALL_OPTS);
 
 	if ((msr.lo & (DBE6x_BOOT_OP_LATCHED)) ==
 	    (DBE6x_BOOT_LOC_FWHUB << DBE6x_BOOT_OP_LATCHED_SHIFT))
@@ -1333,9 +1325,9 @@ static int board_artecgroup_dbe6x(void)
 	msr.lo |= ((boot_loc << DBE6x_PRI_BOOT_LOC_SHIFT) |
 		   (boot_loc << DBE6x_SEC_BOOT_LOC_SHIFT));
 
-	wrmsr(DBE6x_MSR_DIVIL_BALL_OPTS, msr);
+	msr_write(DBE6x_MSR_DIVIL_BALL_OPTS, msr);
 
-	cleanup_cpu_msr();
+	msr_cleanup();
 
 	return 0;
 }
@@ -1351,7 +1343,7 @@ static int amd_sbxxx_gpio9_raise(void)
 	struct pci_dev *dev;
 	uint32_t reg;
 
-	dev = pci_dev_find(0x1002, 0x4372); /* AMD SMBus controller */
+	dev = pcidev_find(0x1002, 0x4372); /* AMD SMBus controller */
 	if (!dev) {
 		msg_perr("\nERROR: AMD SMBus Controller (0x4372) not found.\n");
 		return -1;
@@ -1415,7 +1407,7 @@ static int intel_piix4_gpo_set(unsigned int gpo, int raise)
 		{0}
 	};
 
-	dev = pci_dev_find(0x8086, 0x7110);	/* Intel PIIX4 ISA bridge */
+	dev = pcidev_find(0x8086, 0x7110);	/* Intel PIIX4 ISA bridge */
 	if (!dev) {
 		msg_perr("\nERROR: Intel PIIX4 ISA bridge not found.\n");
 		return -1;
@@ -1434,7 +1426,7 @@ static int intel_piix4_gpo_set(unsigned int gpo, int raise)
 		return -1;
 	}
 
-	dev = pci_dev_find(0x8086, 0x7113);	/* Intel PIIX4 PM */
+	dev = pcidev_find(0x8086, 0x7113);	/* Intel PIIX4 PM */
 	if (!dev) {
 		msg_perr("\nERROR: Intel PIIX4 PM not found.\n");
 		return -1;
@@ -1563,23 +1555,17 @@ static int intel_ich_gpio_set(int gpio, int raise)
 	int i, allowed;
 
 	/* First, look for a known LPC bridge */
-	for (dev = pacc->devices; dev; dev = dev->next) {
-		uint16_t device_class;
-		/* libpci before version 2.2.4 does not store class info. */
-		device_class = pci_read_word(dev, PCI_CLASS_DEVICE);
-		if ((dev->vendor_id == 0x8086) &&
-		    (device_class == 0x0601)) { /* ISA bridge */
-			/* Is this device in our list? */
-			for (i = 0; intel_ich_gpio_table[i].id; i++)
-				if (dev->device_id == intel_ich_gpio_table[i].id)
-					break;
-
-			if (intel_ich_gpio_table[i].id)
-				break;
-		}
-	}
-
+	dev = pcidev_find_vendorclass(0x8086, 0x0601); /* ISA bridge */
 	if (!dev) {
+		msg_perr("\nERROR: No known Intel LPC bridge found.\n");
+		return -1;
+	}
+	/* Is this device in our list? */
+	for (i = 0; intel_ich_gpio_table[i].id; i++)
+		if (dev->device_id == intel_ich_gpio_table[i].id)
+			break;
+
+	if (!intel_ich_gpio_table[i].id) {
 		msg_perr("\nERROR: No known Intel LPC bridge found.\n");
 		return -1;
 	}
@@ -1715,6 +1701,7 @@ static int intel_ich_gpio_set(int gpio, int raise)
  *  - ASUS P5LD2-MQ
  *  - ASUS P5LD2-VM
  *  - ASUS P5LD2-VM DH
+ *  - ASUS P5W DH Deluxe
  */
 static int intel_ich_gpio16_raise(void)
 {
@@ -1949,7 +1936,7 @@ static int via_apollo_gpo_set(int gpio, int raise)
 	uint32_t base, tmp;
 
 	/* VT82C686 power management */
-	dev = pci_dev_find(0x1106, 0x3057);
+	dev = pcidev_find(0x1106, 0x3057);
 	if (!dev) {
 		msg_perr("\nERROR: VT82C686 PM device not found.\n");
 		return -1;
@@ -2022,7 +2009,7 @@ static int sis_gpio0_raise_and_w836xx_memw(void)
 	struct pci_dev *dev;
 	uint16_t base, temp;
 
-	dev = pci_dev_find(0x1039, 0x0962);
+	dev = pcidev_find(0x1039, 0x0962);
 	if (!dev) {
 		msg_perr("Expected south bridge not found\n");
 		return 1;
@@ -2086,7 +2073,7 @@ static int board_mitac_6513wu(void)
 	uint16_t rt_port;
 	uint8_t val;
 
-	dev = pci_dev_find(0x8086, 0x2410);	/* Intel 82801AA ISA bridge */
+	dev = pcidev_find(0x8086, 0x2410);	/* Intel 82801AA ISA bridge */
 	if (!dev) {
 		msg_perr("\nERROR: Intel 82801AA ISA bridge not found.\n");
 		return -1;
@@ -2439,6 +2426,7 @@ const struct board_match board_matches[] = {
 	{0x10DE, 0x0260, 0x1043, 0x81BC,  0x10DE, 0x026C, 0x1043, 0x829E, "^P5N-D$",    NULL, NULL,           P3, "ASUS",        "P5N-D",                 0,   OK, it8718f_gpio63_raise},
 	{0x10DE, 0x0260, 0x1043, 0x81BC,  0x10DE, 0x026C, 0x1043, 0x8249, "^P5N-E SLI$",NULL, NULL,           P3, "ASUS",        "P5N-E SLI",             0,   NT, it8718f_gpio63_raise},
 	{0x8086, 0x24dd, 0x1043, 0x80a6,  0x8086, 0x2570, 0x1043, 0x8157, NULL,         NULL, NULL,           P3, "ASUS",        "P5PE-VM",               0,   OK, intel_ich_gpio21_raise},
+	{0x8086, 0x27da, 0x1043, 0x8179,  0x8086, 0x27b8, 0x1043, 0x8179, "^P5W DH Deluxe$", NULL, NULL,      P3, "ASUS",        "P5W DH Deluxe",         0,   OK, intel_ich_gpio16_raise},
 	{0x8086, 0x2443, 0x1043, 0x8027,  0x8086, 0x1130, 0x1043, 0x8027, "^CUSL2-C",   NULL, NULL,           P3, "ASUS",        "CUSL2-C",               0,   OK, intel_ich_gpio21_raise},
 	{0x8086, 0x2443, 0x1043, 0x8027,  0x8086, 0x1130, 0x1043, 0x8027, "^TUSL2-C",   NULL, NULL,           P3, "ASUS",        "TUSL2-C",               0,   NT, intel_ich_gpio21_raise},
 	{0x1022, 0x780E, 0x1043, 0x1437,  0x1022, 0x780B, 0x1043, 0x1437, "^U38N$",     NULL, NULL,           P2, "ASUS",        "U38N",                  0,   OK, p2_whitelist_laptop},
@@ -2611,13 +2599,13 @@ static const struct board_match *board_match_name(const char *vendor, const char
 		if (!cur_model || strcasecmp(cur_model, model))
 			continue;
 
-		if (!pci_dev_find(board->first_vendor, board->first_device)) {
+		if (!pcidev_find(board->first_vendor, board->first_device)) {
 			msg_pdbg("Odd. Board name \"%s\":\"%s\" matches, but first PCI device %04x:%04x "
 				 "doesn't.\n", vendor, model, board->first_vendor, board->first_device);
 			continue;
 		}
 
-		if (!pci_dev_find(board->second_vendor, board->second_device)) {
+		if (!pcidev_find(board->second_vendor, board->second_device)) {
 			msg_pdbg("Odd. Board name \"%s\":\"%s\" matches, but second PCI device %04x:%04x "
 				 "doesn't.\n", vendor, model, board->second_vendor, board->second_device);
 			continue;
@@ -2653,20 +2641,20 @@ static const struct board_match *board_match_pci_ids(enum board_match_phase phas
 		if (board->phase != phase)
 			continue;
 
-		if (!pci_card_find(board->first_vendor, board->first_device,
-				   board->first_card_vendor,
-				   board->first_card_device))
+		if (!pcidev_card_find(board->first_vendor, board->first_device,
+					board->first_card_vendor,
+					board->first_card_device))
 			continue;
 
 		if (board->second_vendor) {
 			if (board->second_card_vendor) {
-				if (!pci_card_find(board->second_vendor,
-						   board->second_device,
-						   board->second_card_vendor,
-						   board->second_card_device))
+				if (!pcidev_card_find(board->second_vendor,
+							board->second_device,
+							board->second_card_vendor,
+							board->second_card_device))
 					continue;
 			} else {
-				if (!pci_dev_find(board->second_vendor,
+				if (!pcidev_find(board->second_vendor,
 						  board->second_device))
 					continue;
 			}
@@ -2674,7 +2662,7 @@ static const struct board_match *board_match_pci_ids(enum board_match_phase phas
 
 #if defined(__i386__) || defined(__x86_64__)
 		if (board->dmi_pattern) {
-			if (!has_dmi_support) {
+			if (!dmi_is_supported()) {
 				msg_pwarn("Warning: Can't autodetect %s %s, DMI info unavailable.\n",
 					  board->vendor_name, board->board_name);
 				msg_pinfo("Please supply the board vendor and model name with the "

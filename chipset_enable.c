@@ -120,11 +120,11 @@ static struct pci_dev *find_southbridge(uint16_t vendor, const char *name)
 {
 	struct pci_dev *sbdev;
 
-	sbdev = pci_dev_find_vendorclass(vendor, 0x0601);
+	sbdev = pcidev_find_vendorclass(vendor, 0x0601);
 	if (!sbdev)
-		sbdev = pci_dev_find_vendorclass(vendor, 0x0680);
+		sbdev = pcidev_find_vendorclass(vendor, 0x0680);
 	if (!sbdev)
-		sbdev = pci_dev_find_vendorclass(vendor, 0x0000);
+		sbdev = pcidev_find_vendorclass(vendor, 0x0000);
 	if (!sbdev)
 		msg_perr("No southbridge found for %s!\n", name);
 	if (sbdev)
@@ -428,7 +428,7 @@ static int enable_flash_ich_fwh_decode(struct pci_dev *dev, enum ich_chipset ich
 		break;
 	}
 
-	char *idsel = extract_programmer_param("fwh_idsel");
+	char *idsel = extract_programmer_param_str("fwh_idsel");
 	if (idsel && strlen(idsel)) {
 		if (!implemented) {
 			msg_perr("Error: fwh_idsel= specified, but (yet) unsupported on this chipset.\n");
@@ -605,9 +605,12 @@ static enum chipbustype enable_flash_ich_report_gcs(
 	case CHIPSET_300_SERIES_CANNON_POINT:
 	case CHIPSET_400_SERIES_COMET_POINT:
 	case CHIPSET_500_SERIES_TIGER_POINT:
+	case CHIPSET_600_SERIES_ALDER_POINT:
+	case CHIPSET_METEOR_LAKE:
 	case CHIPSET_ELKHART_LAKE:
 	case CHIPSET_APOLLO_LAKE:
 	case CHIPSET_GEMINI_LAKE:
+	case CHIPSET_JASPER_LAKE:
 		reg_name = "BIOS_SPI_BC";
 		gcs = pci_read_long(dev, 0xdc);
 		bild = (gcs >> 7) & 1;
@@ -709,10 +712,13 @@ static enum chipbustype enable_flash_ich_report_gcs(
 		boot_straps = boot_straps_pch8_lp;
 		break;
 	case CHIPSET_500_SERIES_TIGER_POINT:
+	case CHIPSET_600_SERIES_ALDER_POINT:
+	case CHIPSET_METEOR_LAKE:
 		boot_straps = boot_straps_pch500;
 		break;
 	case CHIPSET_APOLLO_LAKE:
 	case CHIPSET_GEMINI_LAKE:
+	case CHIPSET_JASPER_LAKE:
 	case CHIPSET_ELKHART_LAKE:
 		boot_straps = boot_straps_apl;
 		break;
@@ -741,8 +747,11 @@ static enum chipbustype enable_flash_ich_report_gcs(
 	case CHIPSET_300_SERIES_CANNON_POINT:
 	case CHIPSET_400_SERIES_COMET_POINT:
 	case CHIPSET_500_SERIES_TIGER_POINT:
+	case CHIPSET_600_SERIES_ALDER_POINT:
+	case CHIPSET_METEOR_LAKE:
 	case CHIPSET_APOLLO_LAKE:
 	case CHIPSET_GEMINI_LAKE:
+	case CHIPSET_JASPER_LAKE:
 	case CHIPSET_ELKHART_LAKE:
 		bbs = (gcs >> 6) & 0x1;
 		break;
@@ -994,9 +1003,24 @@ static int enable_flash_pch500(struct pci_dev *const dev, const char *const name
 	return enable_flash_pch100_or_c620(dev, name, 0x1f, 5, CHIPSET_500_SERIES_TIGER_POINT);
 }
 
+static int enable_flash_pch600(struct pci_dev *const dev, const char *const name)
+{
+	return enable_flash_pch100_or_c620(dev, name, 0x1f, 5, CHIPSET_600_SERIES_ALDER_POINT);
+}
+
+static int enable_flash_mtl(struct pci_dev *const dev, const char *const name)
+{
+	return enable_flash_pch100_or_c620(dev, name, 0x1f, 5, CHIPSET_METEOR_LAKE);
+}
+
 static int enable_flash_mcc(struct pci_dev *const dev, const char *const name)
 {
 	return enable_flash_pch100_or_c620(dev, name, 0x1f, 5, CHIPSET_ELKHART_LAKE);
+}
+
+static int enable_flash_jsl(struct pci_dev *const dev, const char *const name)
+{
+	return enable_flash_pch100_or_c620(dev, name, 0x1f, 5, CHIPSET_JASPER_LAKE);
 }
 
 static int enable_flash_apl(struct pci_dev *const dev, const char *const name)
@@ -1109,7 +1133,7 @@ static int enable_flash_vt823x(struct pci_dev *dev, const char *name)
 
 static int enable_flash_vt_vx(struct pci_dev *dev, const char *name)
 {
-	struct pci_dev *south_north = pci_dev_find(0x1106, 0xa353);
+	struct pci_dev *south_north = pcidev_find(0x1106, 0xa353);
 	if (south_north == NULL) {
 		msg_perr("Could not find South-North Module Interface Control device!\n");
 		return ERROR_FATAL;
@@ -1248,21 +1272,21 @@ static int enable_flash_cs5536(struct pci_dev *dev, const char *name)
 	msr_t msr;
 
 	/* Geode only has a single core */
-	if (setup_cpu_msr(0))
+	if (msr_setup(0))
 		return -1;
 
-	msr = rdmsr(MSR_RCONF_DEFAULT);
+	msr = msr_read(MSR_RCONF_DEFAULT);
 	if ((msr.hi >> 24) != 0x22) {
 		msr.hi &= 0xfbffffff;
-		wrmsr(MSR_RCONF_DEFAULT, msr);
+		msr_write(MSR_RCONF_DEFAULT, msr);
 	}
 
-	msr = rdmsr(MSR_NORF_CTL);
+	msr = msr_read(MSR_NORF_CTL);
 	/* Raise WE_CS3 bit. */
 	msr.lo |= 0x08;
-	wrmsr(MSR_NORF_CTL, msr);
+	msr_write(MSR_NORF_CTL, msr);
 
-	cleanup_cpu_msr();
+	msr_cleanup();
 
 #undef MSR_RCONF_DEFAULT
 #undef MSR_NORF_CTL
@@ -1549,7 +1573,7 @@ static int enable_flash_sb400(struct pci_dev *dev, const char *name)
 	struct pci_dev *smbusdev;
 
 	/* Look for the SMBus device. */
-	smbusdev = pci_dev_find(0x1002, 0x4372);
+	smbusdev = pcidev_find(0x1002, 0x4372);
 
 	if (!smbusdev) {
 		msg_perr("ERROR: SMBus device not found. Aborting.\n");
@@ -2113,6 +2137,7 @@ const struct penable chipset_enables[] = {
 	{0x8086, 0x5af0, B_S,    DEP, "Intel", "Apollo Lake",			enable_flash_apl},
 	{0x8086, 0x3197, B_S,    NT,  "Intel", "Gemini Lake",			enable_flash_glk},
 	{0x8086, 0x31e8, B_S,    DEP, "Intel", "Gemini Lake",			enable_flash_glk},
+	{0x8086, 0x4da4, B_S,    DEP, "Intel", "Jasper Lake",			enable_flash_jsl},
 	{0x8086, 0x4b24, B_S,    DEP, "Intel", "Elkhart Lake",			enable_flash_mcc},
 	{0x8086, 0xa303, B_S,    NT,  "Intel", "H310",				enable_flash_pch300},
 	{0x8086, 0xa304, B_S,    NT,  "Intel", "H370",				enable_flash_pch300},
@@ -2141,6 +2166,18 @@ const struct penable chipset_enables[] = {
 	{0x8086, 0x4389, B_S,    NT,  "Intel", "WM590",				enable_flash_pch500},
 	{0x8086, 0x438a, B_S,    NT,  "Intel", "QM580",				enable_flash_pch500},
 	{0x8086, 0x438b, B_S,    DEP, "Intel", "HM570",				enable_flash_pch500},
+	{0x8086, 0x54a4, B_S,    DEP, "Intel", "Alder Lake-N",			enable_flash_pch600},
+	{0x8086, 0x51a4, B_S,    DEP, "Intel", "Alder Lake-P",			enable_flash_pch600},
+	{0x8086, 0x7a87, B_S,    NT,  "Intel", "H610",				enable_flash_pch600},
+	{0x8086, 0x7a86, B_S,    NT,  "Intel", "B660",				enable_flash_pch600},
+	{0x8086, 0x7a85, B_S,    NT,  "Intel", "H670",				enable_flash_pch600},
+	{0x8086, 0x7a83, B_S,    NT,  "Intel", "Q670",				enable_flash_pch600},
+	{0x8086, 0x7a84, B_S,    DEP, "Intel", "Z690",				enable_flash_pch600},
+	{0x8086, 0x7a88, B_S,    NT,  "Intel", "W680",				enable_flash_pch600},
+	{0x8086, 0x7a8a, B_S,    NT,  "Intel", "W685",				enable_flash_pch600},
+	{0x8086, 0x7a8d, B_S,    NT,  "Intel", "WM690",				enable_flash_pch600},
+	{0x8086, 0x7a8c, B_S,    NT,  "Intel", "HM670",				enable_flash_pch600},
+	{0x8086, 0x7e23, B_S,    DEP, "Intel", "Meteor Lake-P/M",		enable_flash_mtl},
 #endif
 	{0},
 };
@@ -2153,7 +2190,7 @@ int chipset_flash_enable(void)
 
 	/* Now let's try to find the chipset we have... */
 	for (i = 0; chipset_enables[i].vendor_name != NULL; i++) {
-		dev = pci_dev_find(chipset_enables[i].vendor_id,
+		dev = pcidev_find(chipset_enables[i].vendor_id,
 				   chipset_enables[i].device_id);
 		if (!dev)
 			continue;

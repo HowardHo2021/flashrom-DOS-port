@@ -53,6 +53,10 @@ enum amd_chipset {
 #define FIFO_SIZE_OLD		8
 #define FIFO_SIZE_YANGTZE	71
 
+#define SPI100_CMD_CODE_REG	0x45
+#define SPI100_CMD_TRIGGER_REG	0x47
+#define   SPI100_EXECUTE_CMD	(1 << 7)
+
 struct sb600spi_data {
 	struct flashctx *flash;
 	uint8_t *spibar;
@@ -60,7 +64,7 @@ struct sb600spi_data {
 
 static int find_smbus_dev_rev(uint16_t vendor, uint16_t device)
 {
-	struct pci_dev *smbus_dev = pci_dev_find(vendor, device);
+	struct pci_dev *smbus_dev = pcidev_find(vendor, device);
 	if (!smbus_dev) {
 		msg_pdbg("No SMBus device with ID %04X:%04X found.\n", vendor, device);
 		msg_perr("ERROR: SMBus device not found. Not enabling SPI.\n");
@@ -126,9 +130,9 @@ static enum amd_chipset determine_generation(struct pci_dev *dev)
 		 * found on both Stoney Ridge and Zen platforms.
 		 *
 		 * The revisions I have found by searching various lspci
-		 * outputs are as follows: 0x4b, 0x59 & 0x61.
+		 * outputs are as follows: 0x4b, 0x59, 0x61 & 0x71.
 		 */
-		} else if (rev == 0x4b || rev == 0x51 || rev == 0x59 || rev == 0x61) {
+		} else if (rev == 0x4b || rev == 0x51 || rev == 0x59 || rev == 0x61 || rev == 0x71) {
 			msg_pdbg("Promontory (rev 0x%02x) detected.\n", rev);
 			return CHIPSET_PROMONTORY;
 		} else {
@@ -196,6 +200,16 @@ static void execute_command(uint8_t *sb600_spibar)
 	msg_pspew("Executing... ");
 	mmio_writeb(mmio_readb(sb600_spibar + 2) | 1, sb600_spibar + 2);
 	while (mmio_readb(sb600_spibar + 2) & 1)
+		;
+	msg_pspew("done\n");
+}
+
+static void execute_spi100_command(uint8_t *sb600_spibar)
+{
+	msg_pspew("Executing... ");
+	mmio_writeb(mmio_readb(sb600_spibar + SPI100_CMD_TRIGGER_REG) | SPI100_EXECUTE_CMD,
+			sb600_spibar + SPI100_CMD_TRIGGER_REG);
+	while (mmio_readb(sb600_spibar + SPI100_CMD_TRIGGER_REG) & SPI100_CMD_TRIGGER_REG)
 		;
 	msg_pspew("done\n");
 }
@@ -299,7 +313,7 @@ static int spi100_spi_send_command(const struct flashctx *flash, unsigned int wr
 	unsigned char cmd = *writearr++;
 	writecnt--;
 	msg_pspew("%s, cmd=0x%02x, writecnt=%d, readcnt=%d\n", __func__, cmd, writecnt, readcnt);
-	mmio_writeb(cmd, sb600_spibar + 0);
+	mmio_writeb(cmd, sb600_spibar + SPI100_CMD_CODE_REG);
 
 	int ret = check_readwritecnt(flash, writecnt, readcnt);
 	if (ret != 0)
@@ -317,7 +331,7 @@ static int spi100_spi_send_command(const struct flashctx *flash, unsigned int wr
 	}
 	msg_pspew("\n");
 
-	execute_command(sb600_spibar);
+	execute_spi100_command(sb600_spibar);
 
 	msg_pspew("Reading buffer: ");
 	for (count = 0; count < readcnt; count++) {
@@ -402,7 +416,7 @@ static int handle_speed(struct pci_dev *dev, enum amd_chipset amd_gen, uint8_t *
 	char *spispeed;
 	char *spireadmode;
 
-	spispeed = extract_programmer_param("spispeed");
+	spispeed = extract_programmer_param_str("spispeed");
 	if (spispeed != NULL) {
 		unsigned int i;
 		for (i = 0; i < ARRAY_SIZE(spispeeds); i++) {
@@ -426,7 +440,7 @@ static int handle_speed(struct pci_dev *dev, enum amd_chipset amd_gen, uint8_t *
 		free(spispeed);
 	}
 
- 	spireadmode = extract_programmer_param("spireadmode");
+	spireadmode = extract_programmer_param_str("spireadmode");
 	if (spireadmode != NULL) {
 		unsigned int i;
 		for (i = 0; i < ARRAY_SIZE(spireadmodes); i++) {
@@ -515,7 +529,7 @@ static int handle_imc(struct pci_dev *dev, enum amd_chipset amd_gen)
 		return 0;
 
 	bool amd_imc_force = false;
-	char *arg = extract_programmer_param("amd_imc_force");
+	char *arg = extract_programmer_param_str("amd_imc_force");
 	if (arg && !strcmp(arg, "yes")) {
 		amd_imc_force = true;
 		msg_pspew("amd_imc_force enabled.\n");
@@ -581,36 +595,39 @@ static int sb600spi_shutdown(void *data)
 }
 
 static const struct spi_master spi_master_sb600 = {
-	.max_data_read = FIFO_SIZE_OLD,
-	.max_data_write = FIFO_SIZE_OLD - 3,
-	.command = sb600_spi_send_command,
-	.multicommand = default_spi_send_multicommand,
-	.read = default_spi_read,
-	.write_256 = default_spi_write_256,
-	.write_aai = default_spi_write_aai,
-	.shutdown = sb600spi_shutdown,
+	.max_data_read	= FIFO_SIZE_OLD,
+	.max_data_write	= FIFO_SIZE_OLD - 3,
+	.command	= sb600_spi_send_command,
+	.multicommand	= default_spi_send_multicommand,
+	.read		= default_spi_read,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
+	.shutdown	= sb600spi_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static const struct spi_master spi_master_yangtze = {
-	.max_data_read = FIFO_SIZE_YANGTZE - 3, /* Apparently the big SPI 100 buffer is not a ring buffer. */
-	.max_data_write = FIFO_SIZE_YANGTZE - 3,
-	.command = spi100_spi_send_command,
-	.multicommand = default_spi_send_multicommand,
-	.read = default_spi_read,
-	.write_256 = default_spi_write_256,
-	.write_aai = default_spi_write_aai,
-	.shutdown = sb600spi_shutdown,
+	.max_data_read	= FIFO_SIZE_YANGTZE - 3, /* Apparently the big SPI 100 buffer is not a ring buffer. */
+	.max_data_write	= FIFO_SIZE_YANGTZE - 3,
+	.command	= spi100_spi_send_command,
+	.multicommand	= default_spi_send_multicommand,
+	.read		= default_spi_read,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
+	.shutdown	= sb600spi_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static const struct spi_master spi_master_promontory = {
-	.max_data_read = MAX_DATA_READ_UNLIMITED,
-	.max_data_write = FIFO_SIZE_YANGTZE - 3,
-	.command = spi100_spi_send_command,
-	.multicommand = default_spi_send_multicommand,
-	.read = promontory_read_memmapped,
-	.write_256 = default_spi_write_256,
-	.write_aai = default_spi_write_aai,
-	.shutdown = sb600spi_shutdown,
+	.max_data_read	= MAX_DATA_READ_UNLIMITED,
+	.max_data_write	= FIFO_SIZE_YANGTZE - 3,
+	.command	= spi100_spi_send_command,
+	.multicommand	= default_spi_send_multicommand,
+	.read		= promontory_read_memmapped,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
+	.shutdown	= sb600spi_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 int sb600_probe_spi(struct pci_dev *dev)
@@ -734,11 +751,11 @@ int sb600_probe_spi(struct pci_dev *dev)
 	}
 
 	/* Look for the SMBus device. */
-	smbus_dev = pci_dev_find(0x1002, 0x4385);
+	smbus_dev = pcidev_find(0x1002, 0x4385);
 	if (!smbus_dev)
-		smbus_dev = pci_dev_find(0x1022, 0x780b); /* AMD FCH */
+		smbus_dev = pcidev_find(0x1022, 0x780b); /* AMD FCH */
 	if (!smbus_dev)
-		smbus_dev = pci_dev_find(0x1022, 0x790b); /* AMD FP4 */
+		smbus_dev = pcidev_find(0x1022, 0x790b); /* AMD FP4 */
 	if (!smbus_dev) {
 		msg_perr("ERROR: SMBus device not found. Not enabling SPI.\n");
 		return ERROR_NONFATAL;

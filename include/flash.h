@@ -34,9 +34,12 @@
 
 #include "libflashrom.h"
 #include "layout.h"
+#include "writeprotect.h"
 
 #define KiB (1024)
 #define MiB (1024 * KiB)
+
+#define BIT(x) (1<<(x))
 
 /* Assumes `n` and `a` are at most 64-bit wide (to avoid typeof() operator). */
 #define ALIGN_DOWN(n, a) ((n) & ~((uint64_t)(a) - 1))
@@ -70,7 +73,7 @@ enum chipbustype {
 
 /*
  * The following enum defines possible write granularities of flash chips. These tend to reflect the properties
- * of the actual hardware not necesserily the write function(s) defined by the respective struct flashchip.
+ * of the actual hardware not necessarily the write function(s) defined by the respective struct flashchip.
  * The latter might (and should) be more precisely specified, e.g. they might bail out early if their execution
  * would result in undefined chip contents.
  */
@@ -123,22 +126,30 @@ enum write_granularity {
 #define FEATURE_4BA_ENTER	(1 << 10) /**< Can enter/exit 4BA mode with instructions 0xb7/0xe9 w/o WREN */
 #define FEATURE_4BA_ENTER_WREN	(1 << 11) /**< Can enter/exit 4BA mode with instructions 0xb7/0xe9 after WREN */
 #define FEATURE_4BA_ENTER_EAR7	(1 << 12) /**< Can enter/exit 4BA mode by setting bit7 of the ext addr reg */
-#define FEATURE_4BA_EXT_ADDR	(1 << 13) /**< Regular 3-byte operations can be used by writing the most
-					       significant address byte into an extended address register. */
-#define FEATURE_4BA_READ	(1 << 14) /**< Native 4BA read instruction (0x13) is supported. */
-#define FEATURE_4BA_FAST_READ	(1 << 15) /**< Native 4BA fast read instruction (0x0c) is supported. */
-#define FEATURE_4BA_WRITE	(1 << 16) /**< Native 4BA byte program (0x12) is supported. */
+#define FEATURE_4BA_EAR_C5C8	(1 << 13) /**< Regular 3-byte operations can be used by writing the most
+					       significant address byte into an extended address register
+					       (using 0xc5/0xc8 instructions). */
+#define FEATURE_4BA_EAR_1716	(1 << 14) /**< Like FEATURE_4BA_EAR_C5C8 but with 0x17/0x16 instructions. */
+#define FEATURE_4BA_READ	(1 << 15) /**< Native 4BA read instruction (0x13) is supported. */
+#define FEATURE_4BA_FAST_READ	(1 << 16) /**< Native 4BA fast read instruction (0x0c) is supported. */
+#define FEATURE_4BA_WRITE	(1 << 17) /**< Native 4BA byte program (0x12) is supported. */
 /* 4BA Shorthands */
+#define FEATURE_4BA_EAR_ANY	(FEATURE_4BA_EAR_C5C8 | FEATURE_4BA_EAR_1716)
 #define FEATURE_4BA_NATIVE	(FEATURE_4BA_READ | FEATURE_4BA_FAST_READ | FEATURE_4BA_WRITE)
-#define FEATURE_4BA		(FEATURE_4BA_ENTER | FEATURE_4BA_EXT_ADDR | FEATURE_4BA_NATIVE)
-#define FEATURE_4BA_WREN	(FEATURE_4BA_ENTER_WREN | FEATURE_4BA_EXT_ADDR | FEATURE_4BA_NATIVE)
-#define FEATURE_4BA_EAR7	(FEATURE_4BA_ENTER_EAR7 | FEATURE_4BA_EXT_ADDR | FEATURE_4BA_NATIVE)
+#define FEATURE_4BA		(FEATURE_4BA_ENTER | FEATURE_4BA_EAR_C5C8 | FEATURE_4BA_NATIVE)
+#define FEATURE_4BA_WREN	(FEATURE_4BA_ENTER_WREN | FEATURE_4BA_EAR_C5C8 | FEATURE_4BA_NATIVE)
+#define FEATURE_4BA_EAR7	(FEATURE_4BA_ENTER_EAR7 | FEATURE_4BA_EAR_C5C8 | FEATURE_4BA_NATIVE)
 /*
  * Most flash chips are erased to ones and programmed to zeros. However, some
  * other flash chips, such as the ENE KB9012 internal flash, work the opposite way.
  */
-#define FEATURE_ERASED_ZERO	(1 << 17)
-#define FEATURE_NO_ERASE	(1 << 18)
+#define FEATURE_ERASED_ZERO	(1 << 18)
+#define FEATURE_NO_ERASE	(1 << 19)
+
+#define FEATURE_WRSR_EXT2	(1 << 20)
+#define FEATURE_WRSR2		(1 << 21)
+#define FEATURE_WRSR_EXT3	((1 << 22) | FEATURE_WRSR_EXT2)
+#define FEATURE_WRSR3		(1 << 23)
 
 #define ERASED_VALUE(flash)	(((flash)->chip->feature_bits & FEATURE_ERASED_ZERO) ? 0x00 : 0xff)
 
@@ -163,8 +174,36 @@ enum test_state {
 #define TEST_BAD_PREW	(struct tested){ .probe = BAD, .read = BAD, .erase = BAD, .write = BAD }
 
 struct flashrom_flashctx;
-#define flashctx flashrom_flashctx /* TODO: Agree on a name and convert all occurences. */
+#define flashctx flashrom_flashctx /* TODO: Agree on a name and convert all occurrences. */
 typedef int (erasefunc_t)(struct flashctx *flash, unsigned int addr, unsigned int blocklen);
+
+enum flash_reg {
+	INVALID_REG = 0,
+	STATUS1,
+	STATUS2,
+	STATUS3,
+	MAX_REGISTERS
+};
+
+struct reg_bit_info {
+	/* Register containing the bit */
+	enum flash_reg reg;
+
+	/* Bit index within register */
+	uint8_t bit_index;
+
+	/*
+	 * Writability of the bit. RW does not guarantee the bit will be
+	 * writable, for example if status register protection is enabled.
+	 */
+	enum {
+		RO, /* Read only */
+		RW, /* Readable and writable */
+		OTP /* One-time programmable */
+	} writability;
+};
+
+struct wp_bits;
 
 struct flashchip {
 	const char *vendor;
@@ -234,18 +273,50 @@ struct flashchip {
 	int (*unlock) (struct flashctx *flash);
 	int (*write) (struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 	int (*read) (struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
-	uint8_t (*read_status) (const struct flashctx *flash);
-	int (*write_status) (const struct flashctx *flash, int status);
 	struct voltage {
 		uint16_t min;
 		uint16_t max;
 	} voltage;
 	enum write_granularity gran;
 
-	/* SPI specific options (TODO: Make it a union in case other bustypes get specific options.) */
-	uint8_t wrea_override; /**< override opcode for write extended address register */
+	struct reg_bit_map {
+		/* Status register protection bit (SRP) */
+		struct reg_bit_info srp;
 
-	struct wp *wp;
+		/* Status register lock bit (SRP) */
+		struct reg_bit_info srl;
+
+		/*
+		 * Note: some datasheets refer to configuration bits that
+		 * function like TB/SEC/CMP bits as BP bits (e.g. BP3 for a bit
+		 * that functions like TB).
+		 *
+		 * As a convention, any config bit that functions like a
+		 * TB/SEC/CMP bit should be assigned to the respective
+		 * tb/sec/cmp field in this structure, even if the datasheet
+		 * uses a different name.
+		 */
+
+		/* Block protection bits (BP) */
+		/* Extra element for terminator */
+		struct reg_bit_info bp[MAX_BP_BITS + 1];
+
+		/* Top/bottom protection bit (TB) */
+		struct reg_bit_info tb;
+
+		/* Sector/block protection bit (SEC) */
+		struct reg_bit_info sec;
+
+		/* Complement bit (CMP) */
+		struct reg_bit_info cmp;
+
+		/* Write Protect Selection (per sector protection when set) */
+		struct reg_bit_info wps;
+	} reg_bits;
+
+	/* Function that takes a set of WP config bits (e.g. BP, SEC, TB, etc) */
+	/* and determines what protection range they select. */
+	void (*decode_range)(size_t *start, size_t *len, const struct wp_bits *, size_t chip_len);
 };
 
 typedef int (*chip_restore_fn_cb_t)(struct flashctx *flash, uint8_t status);
@@ -283,6 +354,9 @@ struct flashrom_flashctx {
 		chip_restore_fn_cb_t func;
 		uint8_t status;
 	} chip_restore_fn[MAX_CHIP_RESTORE_FUNCTIONS];
+	/* Progress reporting */
+	flashrom_progress_callback *progress_callback;
+	struct flashrom_progress *progress_state;
 };
 
 /* Timing used in probe routines. ZERO is -2 to differentiate between an unset
@@ -341,9 +415,7 @@ void unmap_flash(struct flashctx *flash);
 int read_memmapped(struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
 int erase_flash(struct flashctx *flash);
 int probe_flash(struct registered_master *mst, int startchip, struct flashctx *fill_flash, int force);
-int read_flash_to_file(struct flashctx *flash, const char *filename);
 int verify_range(struct flashctx *flash, const uint8_t *cmpbuf, unsigned int start, unsigned int len);
-int need_erase(const uint8_t *have, const uint8_t *want, unsigned int len, enum write_granularity gran, const uint8_t erased_value);
 void emergency_help_message(void);
 void print_version(void);
 void print_buildinfo(void);
@@ -377,12 +449,11 @@ void print_chip_support_status(const struct flashchip *chip);
 /* cli_output.c */
 extern enum flashrom_log_level verbose_screen;
 extern enum flashrom_log_level verbose_logfile;
-#ifndef STANDALONE
 int open_logfile(const char * const filename);
 int close_logfile(void);
 void start_logging(void);
-#endif
 int flashrom_print_cb(enum flashrom_log_level level, const char *fmt, va_list ap);
+void flashrom_progress_cb(struct flashrom_flashctx *flashctx);
 /* Let gcc and clang check for correct printf-style format strings. */
 int print(enum flashrom_log_level level, const char *fmt, ...)
 #ifdef __MINGW32__
@@ -411,6 +482,7 @@ __attribute__((format(printf, 2, 3)));
 #define msg_gspew(...)	print(FLASHROM_MSG_SPEW, __VA_ARGS__)	/* general debug spew  */
 #define msg_pspew(...)	print(FLASHROM_MSG_SPEW, __VA_ARGS__)	/* programmer debug spew  */
 #define msg_cspew(...)	print(FLASHROM_MSG_SPEW, __VA_ARGS__)	/* chip debug spew  */
+void update_progress(struct flashctx *flash, enum flashrom_progress_stage stage, size_t current, size_t total);
 
 /* spi.c */
 struct spi_command {

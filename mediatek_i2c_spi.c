@@ -439,17 +439,6 @@ static int mediatek_send_command(const struct flashctx *flash,
 	return 0;
 }
 
-static const struct spi_master spi_master_i2c_mediatek = {
-	.max_data_read = I2C_SMBUS_BLOCK_MAX,
-	// Leave room for 1-byte command and up to a 4-byte address.
-	.max_data_write = I2C_SMBUS_BLOCK_MAX - 5,
-	.command = mediatek_send_command,
-	.multicommand = default_spi_send_multicommand,
-	.read = default_spi_read,
-	.write_256 = default_spi_write_256,
-	.write_aai = default_spi_write_aai,
-};
-
 static int mediatek_shutdown(void *data)
 {
 	int ret = 0;
@@ -462,9 +451,59 @@ static int mediatek_shutdown(void *data)
 	return ret;
 }
 
+static const struct spi_master spi_master_i2c_mediatek = {
+	.max_data_read	= I2C_SMBUS_BLOCK_MAX,
+	// Leave room for 1-byte command and up to a 4-byte address.
+	.max_data_write	= I2C_SMBUS_BLOCK_MAX - 5,
+	.command	= mediatek_send_command,
+	.multicommand	= default_spi_send_multicommand,
+	.read		= default_spi_read,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
+	.shutdown	= mediatek_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
+};
+
+static int get_params(bool *allow_brick)
+{
+	char *brick_str = NULL;
+	int ret = 0;
+
+	*allow_brick = false; /* Default behaviour is to bail. */
+	brick_str = extract_programmer_param_str("allow_brick");
+	if (brick_str) {
+		if (!strcmp(brick_str, "yes")) {
+			*allow_brick = true;
+		} else {
+			msg_perr("%s: Incorrect param format, allow_brick=yes.\n", __func__);
+			ret = SPI_GENERIC_ERROR;
+		}
+	}
+	free(brick_str);
+
+	return ret;
+}
+
 static int mediatek_init(void)
 {
 	int ret;
+	bool allow_brick;
+
+	if (get_params(&allow_brick))
+		return SPI_GENERIC_ERROR;
+
+	/*
+	 * TODO: Once board_enable can facilitate safe i2c allow listing
+	 * 	 then this can be removed.
+	 */
+	if (!allow_brick) {
+		msg_perr("%s: For i2c drivers you must explicitly 'allow_brick=yes'. ", __func__);
+		msg_perr("There is currently no way to determine if the programmer works on a board "
+			 "as i2c device address space can be overloaded. Set 'allow_brick=yes' if "
+			 "you are sure you know what you are doing.\n");
+		return SPI_GENERIC_ERROR;
+	}
+
 	int fd = i2c_open_from_programmer_params(ISP_PORT, 0);
 	if (fd < 0) {
 		msg_perr("Failed to open i2c\n");
@@ -495,10 +534,7 @@ static int mediatek_init(void)
 		return ret;
 	}
 
-	ret |= register_shutdown(mediatek_shutdown, port);
-	ret |= register_spi_master(&spi_master_i2c_mediatek, port);
-
-	return ret;
+	return register_spi_master(&spi_master_i2c_mediatek, port);
 }
 
 const struct programmer_entry programmer_mediatek_i2c_spi = {

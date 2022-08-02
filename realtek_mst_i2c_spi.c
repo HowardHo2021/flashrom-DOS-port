@@ -51,7 +51,7 @@
 
 struct realtek_mst_i2c_spi_data {
 	int fd;
-	int reset;
+	bool reset;
 };
 
 static int realtek_mst_i2c_spi_write_data(int fd, uint16_t addr, void *buf, uint16_t len)
@@ -191,8 +191,7 @@ static int realtek_mst_i2c_spi_read_indexed_register(int fd, uint16_t address, u
 }
 
 
-/* Toggle the GPIO pin 88, this could be routed to different controls like write
- * protection or a led. */
+/* Toggle the GPIO pin 88, reserved for write protection pin of the external flash. */
 static int realtek_mst_i2c_spi_toggle_gpio_88_strap(int fd, bool toggle)
 {
 	int ret = 0;
@@ -398,6 +397,7 @@ static int realtek_mst_i2c_spi_write_256(struct flashctx *flash, const uint8_t *
 		ret |= realtek_mst_i2c_execute_write(fd);
 		if (ret)
 			break;
+		update_progress(flash, FLASHROM_PROGRESS_WRITE, i + RTK_PAGE_SIZE, len);
 	}
 
 	return ret;
@@ -433,48 +433,59 @@ static int realtek_mst_i2c_spi_shutdown(void *data)
 }
 
 static const struct spi_master spi_master_i2c_realtek_mst = {
-	.max_data_read = 16,
-	.max_data_write = 8,
-	.command = realtek_mst_i2c_spi_send_command,
-	.multicommand = default_spi_send_multicommand,
-	.read = realtek_mst_i2c_spi_read,
-	.write_256 = realtek_mst_i2c_spi_write_256,
-	.write_aai = realtek_mst_i2c_spi_write_aai,
-	.shutdown = realtek_mst_i2c_spi_shutdown,
+	.max_data_read	= 16,
+	.max_data_write	= 8,
+	.command	= realtek_mst_i2c_spi_send_command,
+	.multicommand	= default_spi_send_multicommand,
+	.read		= realtek_mst_i2c_spi_read,
+	.write_256	= realtek_mst_i2c_spi_write_256,
+	.write_aai	= realtek_mst_i2c_spi_write_aai,
+	.shutdown	= realtek_mst_i2c_spi_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
-static int get_params(int *reset, int *enter_isp)
+static int get_params(bool *reset, bool *enter_isp, bool *allow_brick)
 {
-	char *reset_str = NULL, *isp_str = NULL;
+	char *reset_str = NULL, *isp_str = NULL, *brick_str = NULL;
 	int ret = 0;
 
-	reset_str = extract_programmer_param("reset-mcu");
-	if (reset_str) {
-		if (reset_str[0] == '1') {
-			*reset = 1;
-		} else if (reset_str[0] == '0') {
-			*reset = 0;
+	*allow_brick = false; /* Default behaviour is to bail. */
+	brick_str = extract_programmer_param_str("allow_brick");
+	if (brick_str) {
+		if (!strcmp(brick_str, "yes")) {
+			*allow_brick = true;
 		} else {
-			msg_perr("%s: Incorrect param format, reset-mcu=1 or 0.\n", __func__);
+			msg_perr("%s: Incorrect param format, allow_brick=yes.\n", __func__);
 			ret = SPI_GENERIC_ERROR;
 		}
-	} else {
-		*reset = 0; /* Default behaviour is no MCU reset on tear-down. */
+	}
+	free(brick_str);
+
+	*reset = false; /* Default behaviour is no MCU reset on tear-down. */
+	reset_str = extract_programmer_param_str("reset_mcu");
+	if (reset_str) {
+		if (reset_str[0] == '1') {
+			*reset = true;
+		} else if (reset_str[0] == '0') {
+			*reset = false;
+		} else {
+			msg_perr("%s: Incorrect param format, reset_mcu=1 or 0.\n", __func__);
+			ret = SPI_GENERIC_ERROR;
+		}
 	}
 	free(reset_str);
 
-	isp_str = extract_programmer_param("enter-isp");
+	*enter_isp = true; /* Default behaviour is enter ISP on setup. */
+	isp_str = extract_programmer_param_str("enter_isp");
 	if (isp_str) {
 		if (isp_str[0] == '1') {
-			*enter_isp = 1;
+			*enter_isp = true;
 		} else if (isp_str[0] == '0') {
-			*enter_isp = 0;
+			*enter_isp = false;
 		} else {
-			msg_perr("%s: Incorrect param format, enter-isp=1 or 0.\n", __func__);
+			msg_perr("%s: Incorrect param format, enter_isp=1 or 0.\n", __func__);
 			ret = SPI_GENERIC_ERROR;
 		}
-	} else {
-		*enter_isp = 1; /* Default behaviour is enter ISP on setup. */
 	}
 	free(isp_str);
 
@@ -484,10 +495,22 @@ static int get_params(int *reset, int *enter_isp)
 static int realtek_mst_i2c_spi_init(void)
 {
 	int ret = 0;
-	int reset = 0, enter_isp = 0;
+	bool reset = false, enter_isp = false, allow_brick = false;
 
-	if (get_params(&reset, &enter_isp))
+	if (get_params(&reset, &enter_isp, &allow_brick))
 		return SPI_GENERIC_ERROR;
+
+	/*
+	 * TODO: Once board_enable can facilitate safe i2c allow listing
+	 * 	 then this can be removed.
+	 */
+	if (!allow_brick) {
+		msg_perr("%s: For i2c drivers you must explicitly 'allow_brick=yes'. ", __func__);
+		msg_perr("There is currently no way to determine if the programmer works on a board "
+			 "as i2c device address space can be overloaded. Set 'allow_brick=yes' if "
+			 "you are sure you know what you are doing.\n");
+		return SPI_GENERIC_ERROR;
+	}
 
 	int fd = i2c_open_from_programmer_params(REGISTER_ADDRESS, 0);
 	if (fd < 0)

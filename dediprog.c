@@ -416,7 +416,7 @@ static int prepare_rw_cmd(
 			}
 		}
 	} else {
-		if (flash->chip->feature_bits & FEATURE_4BA_EXT_ADDR) {
+		if (flash->chip->feature_bits & FEATURE_4BA_EAR_ANY) {
 			if (spi_set_extended_address(flash, start >> 24))
 				return 1;
 		} else if (start >> 24) {
@@ -658,6 +658,7 @@ static int dediprog_spi_bulk_write(struct flashctx *flash, const uint8_t *buf, u
 			msg_perr("SPI bulk write failed, expected %i, got %s!\n", 512, libusb_error_name(ret));
 			return 1;
 		}
+		update_progress(flash, FLASHROM_PROGRESS_WRITE, i + 1, count);
 	}
 
 	return 0;
@@ -1038,6 +1039,7 @@ static struct spi_master spi_master_dediprog = {
 	.write_256	= dediprog_spi_write_256,
 	.write_aai	= dediprog_spi_write_aai,
 	.shutdown	= dediprog_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 /*
@@ -1085,7 +1087,7 @@ static int dediprog_init(void)
 	long target = FLASH_TYPE_APPLICATION_FLASH_1;
 	int i, ret;
 
-	spispeed = extract_programmer_param("spispeed");
+	spispeed = extract_programmer_param_str("spispeed");
 	if (spispeed) {
 		for (i = 0; spispeeds[i].name; ++i) {
 			if (!strcasecmp(spispeeds[i].name, spispeed)) {
@@ -1101,7 +1103,7 @@ static int dediprog_init(void)
 		free(spispeed);
 	}
 
-	voltage = extract_programmer_param("voltage");
+	voltage = extract_programmer_param_str("voltage");
 	if (voltage) {
 		millivolt = parse_voltage(voltage);
 		free(voltage);
@@ -1110,7 +1112,7 @@ static int dediprog_init(void)
 		msg_pinfo("Setting voltage to %i mV\n", millivolt);
 	}
 
-	id_str = extract_programmer_param("id");
+	id_str = extract_programmer_param_str("id");
 	if (id_str) {
 		char prefix0, prefix1;
 		if (sscanf(id_str, "%c%c%d", &prefix0, &prefix1, &id) != 3) {
@@ -1133,7 +1135,7 @@ static int dediprog_init(void)
 	}
 	free(id_str);
 
-	device = extract_programmer_param("device");
+	device = extract_programmer_param_str("device");
 	if (device) {
 		char *dev_suffix;
 		if (id != -1) {
@@ -1160,7 +1162,7 @@ static int dediprog_init(void)
 	}
 	free(device);
 
-	target_str = extract_programmer_param("target");
+	target_str = extract_programmer_param_str("target");
 	if (target_str) {
 		char *target_suffix;
 		errno = 0;

@@ -73,13 +73,12 @@ override LDFLAGS += -L$(LIBS_BASE)/lib -Wl,-rpath -Wl,$(LIBS_BASE)/lib
 endif
 
 ifeq ($(CONFIG_STATIC),yes)
-override PKG_CONFIG += --static
 override LDFLAGS += -static
 endif
 
 # Set LC_ALL=C to minimize influences of the locale.
 # However, this won't work for the majority of relevant commands because they use the $(shell) function and
-# GNU make does not relay variables exported within the makefile to their evironment.
+# GNU make does not relay variables exported within the makefile to their environment.
 LC_ALL=C
 export LC_ALL
 
@@ -100,8 +99,12 @@ DEPENDS_ON_SERIAL := \
 	CONFIG_PONY_SPI \
 	CONFIG_SERPROG \
 
+DEPENDS_ON_SOCKETS := \
+	CONFIG_SERPROG \
+
 DEPENDS_ON_BITBANG_SPI := \
-	CONFIG_INTERNAL \
+	CONFIG_DEVELOPERBOX_SPI \
+	CONFIG_INTERNAL_X86 \
 	CONFIG_NICINTEL_SPI \
 	CONFIG_OGP_SPI \
 	CONFIG_PONY_SPI \
@@ -111,7 +114,7 @@ DEPENDS_ON_RAW_MEM_ACCESS := \
 	CONFIG_ATAPROMISE \
 	CONFIG_DRKAISER \
 	CONFIG_GFXNVIDIA \
-	CONFIG_INTERNAL \
+	CONFIG_INTERNAL_X86 \
 	CONFIG_IT8212 \
 	CONFIG_NICINTEL \
 	CONFIG_NICINTEL_EEPROM \
@@ -121,12 +124,12 @@ DEPENDS_ON_RAW_MEM_ACCESS := \
 	CONFIG_SATASII \
 
 DEPENDS_ON_X86_MSR := \
-	CONFIG_INTERNAL \
+	CONFIG_INTERNAL_X86 \
 
 DEPENDS_ON_X86_PORT_IO := \
 	CONFIG_ATAHPT \
 	CONFIG_ATAPROMISE \
-	CONFIG_INTERNAL \
+	CONFIG_INTERNAL_X86 \
 	CONFIG_NIC3COM \
 	CONFIG_NICNATSEMI \
 	CONFIG_NICREALTEK \
@@ -170,6 +173,11 @@ DEPENDS_ON_LIBJAYLINK := \
 DEPENDS_ON_LIB_NI845X := \
 	CONFIG_NI845X_SPI \
 
+DEPENDS_ON_LINUX_I2C := \
+	CONFIG_MSTARDDC_SPI \
+	CONFIG_PARADE_LSPCON \
+	CONFIG_REALTEK_MST_I2C_SPI \
+	CONFIG_MEDIATEK_I2C_SPI \
 
 ifeq ($(CONFIG_ENABLE_LIBUSB1_PROGRAMMERS), no)
 $(call disable_all,$(DEPENDS_ON_LIBUSB1))
@@ -240,32 +248,19 @@ HAS_PCI_OLD_GET_DEV := $(call c_compile_test, Makefile.d/pci_old_get_dev_test.c,
 HAS_FT232H          := $(call c_compile_test, Makefile.d/ft232h_test.c, $(CONFIG_LIBFTDI1_CFLAGS))
 HAS_UTSNAME         := $(call c_compile_test, Makefile.d/utsname_test.c)
 HAS_CLOCK_GETTIME   := $(call c_compile_test, Makefile.d/clock_gettime_test.c)
+HAS_EXTERN_LIBRT    := $(call c_link_test, Makefile.d/clock_gettime_test.c, , -lrt)
 HAS_LINUX_MTD       := $(call c_compile_test, Makefile.d/linux_mtd_test.c)
 HAS_LINUX_SPI       := $(call c_compile_test, Makefile.d/linux_spi_test.c)
 HAS_LINUX_I2C       := $(call c_compile_test, Makefile.d/linux_i2c_test.c)
+HAS_SERIAL          := $(strip $(if $(filter $(TARGET_OS), DOS libpayload), no, yes))
+EXEC_SUFFIX         := $(strip $(if $(filter $(TARGET_OS), DOS MinGW), .exe))
 
-ifeq ($(TARGET_OS), $(filter $(TARGET_OS), FreeBSD OpenBSD DragonFlyBSD))
-override CPPFLAGS += -I/usr/local/include
-override LDFLAGS += -L/usr/local/lib
-endif
-
-ifeq ($(TARGET_OS), Darwin)
-override CPPFLAGS += -I/opt/local/include -I/usr/local/include
-override LDFLAGS += -L/opt/local/lib -L/usr/local/lib
-endif
-
-ifeq ($(TARGET_OS), NetBSD)
-override CPPFLAGS += -I/usr/pkg/include
-override LDFLAGS += -L/usr/pkg/lib
-endif
+override CFLAGS += -Iinclude
 
 ifeq ($(TARGET_OS), DOS)
-EXEC_SUFFIX := .exe
 # DJGPP has odd uint*_t definitions which cause lots of format string warnings.
 override CFLAGS += -Wno-format
 override LDFLAGS += -lgetopt
-# Missing serial support.
-$(call mark_unsupported,$(DEPENDS_ON_SERIAL))
 endif
 
 ifeq ($(TARGET_OS), $(filter $(TARGET_OS), MinGW Cygwin))
@@ -276,7 +271,6 @@ endif
 
 # FIXME: Should we check for Cygwin/MSVC as well?
 ifeq ($(TARGET_OS), MinGW)
-EXEC_SUFFIX := .exe
 # MinGW doesn't have the ffs() function, but we can use gcc's __builtin_ffs().
 FLASHROM_CFLAGS += -Dffs=__builtin_ffs
 # Some functions provided by Microsoft do not work as described in C99 specifications. This macro fixes that
@@ -300,12 +294,9 @@ ifeq ($(MAKECMDGOALS),)
 .DEFAULT_GOAL := libflashrom.a
 $(info Setting default goal to libflashrom.a)
 endif
-FLASHROM_CFLAGS += -DSTANDALONE
 $(call mark_unsupported,CONFIG_DUMMY)
 # libpayload does not provide the romsize field in struct pci_dev that the atapromise code requires.
 $(call mark_unsupported,CONFIG_ATAPROMISE)
-# Bus Pirate, Serprog and PonyProg are not supported with libpayload (missing serial support).
-$(call mark_unsupported,$(DEPENDS_ON_SERIAL))
 # Dediprog, Developerbox, USB-Blaster, PICkit2, CH341A and FT2232 are not supported with libpayload (missing libusb support).
 $(call mark_unsupported,$(DEPENDS_ON_LIBUSB1) $(DEPENDS_ON_LIBFTDI) $(DEPENDS_ON_LIBJAYLINK))
 endif
@@ -319,7 +310,7 @@ $(call mark_unsupported,CONFIG_LINUX_SPI)
 endif
 
 ifeq ($(HAS_LINUX_I2C), no)
-$(call mark_unsupported,CONFIG_MSTARDDC_SPI CONFIG_LSPCON_I2C_SPI CONFIG_REALTEK_MST_I2C_SPI)
+$(call mark_unsupported,DEPENDS_ON_LINUX_I2C)
 endif
 
 ifeq ($(TARGET_OS), Android)
@@ -327,8 +318,8 @@ ifeq ($(TARGET_OS), Android)
 $(call mark_unsupported,$(DEPENDS_ON_X86_PORT_IO))
 endif
 
-# Disable the internal programmer on unsupported architectures (everything but x86 and mipsel)
-ifneq ($(ARCH)-little, $(filter $(ARCH), x86 mips)-$(ENDIAN))
+# Disable the internal programmer on unsupported architectures or systems
+ifeq ($(or $(filter $(ARCH), x86), $(filter $(TARGET_OS), Linux)), )
 $(call mark_unsupported,CONFIG_INTERNAL)
 endif
 
@@ -352,6 +343,10 @@ ifeq ($(HAS_LIBUSB1), no)
 $(call mark_unsupported,$(DEPENDS_ON_LIBUSB1))
 endif
 
+ifeq ($(HAS_SERIAL), no)
+$(call mark_unsupported, $(DEPENDS_ON_SERIAL))
+endif
+
 ifeq ($(ENDIAN), little)
 FEATURE_FLAGS += -D'__FLASHROM_LITTLE_ENDIAN__=1'
 endif
@@ -373,37 +368,21 @@ ifneq ($(ARCH), $(filter $(ARCH), x86 mips ppc arm sparc arc))
 $(call mark_unsupported,$(DEPENDS_ON_RAW_MEM_ACCESS))
 endif
 
-ifeq ($(TARGET_OS), $(filter $(TARGET_OS), Linux Darwin NetBSD OpenBSD))
-FEATURE_FLAGS += -D'USE_IOPL=1'
-else
-FEATURE_FLAGS += -D'USE_IOPL=0'
-endif
-
-ifeq ($(TARGET_OS), $(filter $(TARGET_OS), FreeBSD FreeBSD-glibc DragonFlyBSD))
-FEATURE_FLAGS += -D'USE_DEV_IO=1'
-else
-FEATURE_FLAGS += -D'USE_DEV_IO=0'
-endif
-
-ifeq ($(TARGET_OS), $(filter $(TARGET_OS), Hurd))
-FEATURE_FLAGS += -D'USE_IOPERM=1'
-else
-FEATURE_FLAGS += -D'USE_IOPERM=0'
-endif
-
-
 ###############################################################################
 # Flash chip drivers and bus support infrastructure.
 
 CHIP_OBJS = jedec.o stm50.o w39.o w29ee011.o \
 	sst28sf040.o 82802ab.o \
 	sst49lfxxxc.o sst_fwhub.o edi.o flashchips.o spi.o spi25.o spi25_statusreg.o \
-	spi95.o opaque.o sfdp.o en29lv640b.o at45db.o writeprotect.o s25f.o
+	spi95.o opaque.o sfdp.o en29lv640b.o at45db.o s25f.o \
+	writeprotect.o writeprotect_ranges.o
 
 ###############################################################################
 # Library code.
 
-LIB_OBJS = libflashrom.o layout.o flashrom.o udelay.o programmer.o programmer_table.o helpers.o ich_descriptors.o fmap.o
+LIB_OBJS = libflashrom.o layout.o flashrom.o udelay.o programmer.o programmer_table.o \
+	helpers.o ich_descriptors.o fmap.o platform/endian_$(ENDIAN).o platform/memaccess.o
+
 
 ###############################################################################
 # Frontend related stuff.
@@ -422,9 +401,6 @@ SCMDEF := -D'FLASHROM_VERSION="$(VERSION)"'
 # No spaces in release names unless set explicitly
 RELEASENAME ?= $(shell echo "$(VERSION)" | sed -e 's/ /_/')
 
-# Inform user of the version string
-$(info Replacing all version templates with $(VERSION).)
-
 # If a VCS is found then try to install hooks.
 $(shell ./util/getrevision.sh -c 2>/dev/null && ./util/git-hooks/install.sh)
 
@@ -433,6 +409,7 @@ $(shell ./util/getrevision.sh -c 2>/dev/null && ./util/git-hooks/install.sh)
 
 # Always enable internal/onboard support for now.
 CONFIG_INTERNAL ?= yes
+CONFIG_INTERNAL_X86 ?= yes
 
 # Always enable serprog for now.
 CONFIG_SERPROG ?= yes
@@ -480,8 +457,8 @@ CONFIG_PICKIT2_SPI ?= yes
 # Always enable STLink V3
 CONFIG_STLINKV3_SPI ?= yes
 
-# Disables LSPCON support until the i2c helper supports multiple systems.
-CONFIG_LSPCON_I2C_SPI ?= no
+# Disables Parade LSPCON support until the i2c helper supports multiple systems.
+CONFIG_PARADE_LSPCON ?= no
 
 # Disables MediaTek support until the i2c helper supports multiple systems.
 CONFIG_MEDIATEK_I2C_SPI ?= no
@@ -564,14 +541,6 @@ $(foreach var, $(filter CONFIG_%, $(.VARIABLES)),\
 		$(eval $(var)=yes)))
 endif
 
-# Bitbanging SPI infrastructure, default off unless needed.
-
-ifneq ($(call filter_deps,$(DEPENDS_ON_BITBANG_SPI)), )
-override CONFIG_BITBANG_SPI = yes
-else
-CONFIG_BITBANG_SPI ?= no
-endif
-
 ###############################################################################
 # Handle CONFIG_* variables that depend on others set (and verified) above.
 
@@ -601,24 +570,29 @@ endif
 
 FEATURE_FLAGS += -D'CONFIG_DEFAULT_PROGRAMMER_ARGS="$(CONFIG_DEFAULT_PROGRAMMER_ARGS)"'
 
+################################################################################
+
+ifeq ($(ARCH), x86)
+ifeq ($(CONFIG_INTERNAL) $(CONFIG_INTERNAL_X86), yes yes)
+FEATURE_FLAGS += -D'CONFIG_INTERNAL=1'
+PROGRAMMER_OBJS += processor_enable.o chipset_enable.o board_enable.o cbtable.o \
+	internal.o it87spi.o sb600spi.o amd_imc.o wbsio_spi.o mcp6x_spi.o \
+	ichspi.o dmi.o
+endif
+else
 ifeq ($(CONFIG_INTERNAL), yes)
 FEATURE_FLAGS += -D'CONFIG_INTERNAL=1'
 PROGRAMMER_OBJS += processor_enable.o chipset_enable.o board_enable.o cbtable.o internal.o
-ifeq ($(ARCH), x86)
-PROGRAMMER_OBJS += it87spi.o it85spi.o sb600spi.o amd_imc.o wbsio_spi.o mcp6x_spi.o
-PROGRAMMER_OBJS += ichspi.o dmi.o
+endif
+endif
+
 ifeq ($(CONFIG_INTERNAL_DMI), yes)
 FEATURE_FLAGS += -D'CONFIG_INTERNAL_DMI=1'
-endif
-else
-endif
 endif
 
 ifeq ($(CONFIG_SERPROG), yes)
 FEATURE_FLAGS += -D'CONFIG_SERPROG=1'
 PROGRAMMER_OBJS += serprog.o
-NEED_SERIAL += CONFIG_SERPROG
-NEED_POSIX_SOCKETS += CONFIG_SERPROG
 endif
 
 ifeq ($(CONFIG_RAYER_SPI), yes)
@@ -634,12 +608,6 @@ endif
 ifeq ($(CONFIG_PONY_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_PONY_SPI=1'
 PROGRAMMER_OBJS += pony_spi.o
-NEED_SERIAL += CONFIG_PONY_SPI
-endif
-
-ifeq ($(CONFIG_BITBANG_SPI), yes)
-FEATURE_FLAGS += -D'CONFIG_BITBANG_SPI=1'
-PROGRAMMER_OBJS += bitbang_spi.o
 endif
 
 ifeq ($(CONFIG_NIC3COM), yes)
@@ -697,9 +665,9 @@ FEATURE_FLAGS += -D'CONFIG_STLINKV3_SPI=1'
 PROGRAMMER_OBJS += stlinkv3_spi.o
 endif
 
-ifeq ($(CONFIG_LSPCON_I2C_SPI), yes)
-FEATURE_FLAGS += -D'CONFIG_LSPCON_I2C_SPI=1'
-PROGRAMMER_OBJS += lspcon_i2c_spi.o
+ifeq ($(CONFIG_PARADE_LSPCON), yes)
+FEATURE_FLAGS += -D'CONFIG_PARADE_LSPCON=1'
+PROGRAMMER_OBJS += parade_lspcon.o
 endif
 
 ifeq ($(CONFIG_MEDIATEK_I2C_SPI), yes)
@@ -755,7 +723,6 @@ endif
 ifeq ($(CONFIG_BUSPIRATE_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_BUSPIRATE_SPI=1'
 PROGRAMMER_OBJS += buspirate_spi.o
-NEED_SERIAL += CONFIG_BUSPIRATE_SPI
 endif
 
 ifeq ($(CONFIG_DEDIPROG), yes)
@@ -808,11 +775,18 @@ FEATURE_FLAGS += -D'CONFIG_NI845X_SPI=1'
 PROGRAMMER_OBJS += ni845x_spi.o
 endif
 
-ifeq ($(HAS_LINUX_I2C), yes)
+USE_BITBANG_SPI := $(if $(call filter_deps,$(DEPENDS_ON_BITBANG_SPI)),yes,no)
+ifeq ($(USE_BITBANG_SPI), yes)
+LIB_OBJS += bitbang_spi.o
+endif
+
+USE_LINUX_I2C := $(if $(call filter_deps,$(DEPENDS_ON_LINUX_I2C)),yes,no)
+ifeq ($(USE_LINUX_I2C), yes)
 LIB_OBJS += i2c_helper_linux.o
 endif
 
-ifneq ($(NEED_SERIAL), )
+USE_SERIAL := $(if $(call filter_deps,$(DEPENDS_ON_SERIAL)),yes,no)
+ifeq ($(USE_SERIAL), yes)
 LIB_OBJS += serial.o
 ifeq ($(TARGET_OS), Linux)
 LIB_OBJS += custom_baud_linux.o
@@ -821,7 +795,8 @@ LIB_OBJS += custom_baud.o
 endif
 endif
 
-ifneq ($(NEED_POSIX_SOCKETS), )
+USE_SOCKETS := $(if $(call filter_deps,$(DEPENDS_ON_SOCKETS)),yes,no)
+ifeq ($(USE_SOCKETS), yes)
 ifeq ($(TARGET_OS), SunOS)
 override LDFLAGS += -lsocket -lnsl
 endif
@@ -858,7 +833,6 @@ endif
 USE_LIBPCI := $(if $(call filter_deps,$(DEPENDS_ON_LIBPCI)),yes,no)
 ifeq ($(USE_LIBPCI), yes)
 PROGRAMMER_OBJS += pcidev.o
-FEATURE_FLAGS += -D'NEED_PCI=1'
 override CFLAGS  += $(CONFIG_LIBPCI_CFLAGS)
 override LDFLAGS += $(CONFIG_LIBPCI_LDFLAGS)
 endif
@@ -902,11 +876,13 @@ endif
 
 ifeq ($(HAS_CLOCK_GETTIME), yes)
 FEATURE_FLAGS += -D'HAVE_CLOCK_GETTIME=1'
+ifeq ($(HAS_EXTERN_LIBRT), yes)
 override LDFLAGS += -lrt
 endif
+endif
 
-LIBFLASHROM_OBJS = $(CHIP_OBJS) $(PROGRAMMER_OBJS) $(LIB_OBJS)
-OBJS = $(CLI_OBJS) $(LIBFLASHROM_OBJS)
+OBJS = $(CHIP_OBJS) $(PROGRAMMER_OBJS) $(LIB_OBJS)
+
 
 all: config $(PROGRAM)$(EXEC_SUFFIX) $(PROGRAM).8
 ifeq ($(ARCH), x86)
@@ -914,6 +890,7 @@ ifeq ($(ARCH), x86)
 endif
 
 config:
+	@echo Building flashrom version $(VERSION)
 	@echo -n "C compiler found: "
 	@if [ $(CC_WORKING) = yes ]; \
 		then $(CC) --version 2>/dev/null | head -1; \
@@ -960,6 +937,7 @@ config:
 	@echo "Checking for header \"linux/i2c.h\": $(HAS_LINUX_I2C)"
 	@echo "Checking for header \"sys/utsname.h\": $(HAS_UTSNAME)"
 	@echo "Checking for function \"clock_gettime\": $(HAS_CLOCK_GETTIME)"
+	@echo "Checking for external \"librt\": $(HAS_EXTERN_LIBRT)"
 	@if ! [ "$(PROGRAMMER_OBJS)" ]; then					\
 		echo "You have to enable at least one programmer driver!";	\
 		exit 1;								\
@@ -972,10 +950,10 @@ config:
 %.o: %.c config
 	$(CC) -MMD $(CFLAGS) $(CPPFLAGS) $(FLASHROM_CFLAGS) $(FEATURE_FLAGS) $(SCMDEF) -o $@ -c $<
 
-$(PROGRAM)$(EXEC_SUFFIX): $(OBJS)
-	$(CC) -o $(PROGRAM)$(EXEC_SUFFIX) $(OBJS) $(LDFLAGS)
+$(PROGRAM)$(EXEC_SUFFIX): $(CLI_OBJS) libflashrom.a
+	$(CC) -o $@ $^ $(LDFLAGS)
 
-libflashrom.a: $(LIBFLASHROM_OBJS)
+libflashrom.a: $(OBJS)
 	$(AR) rcs $@ $^
 	$(RANLIB) $@
 
@@ -993,7 +971,8 @@ strip: $(PROGRAM)$(EXEC_SUFFIX)
 # This includes all frontends and libflashrom.
 # We don't use EXEC_SUFFIX here because we want to clean everything.
 clean:
-	rm -f $(PROGRAM) $(PROGRAM).exe libflashrom.a $(filter-out Makefile.d, $(wildcard *.d *.o)) $(PROGRAM).8 $(PROGRAM).8.html $(BUILD_DETAILS_FILE)
+	rm -f $(PROGRAM) $(PROGRAM).exe libflashrom.a $(filter-out Makefile.d, $(wildcard *.d *.o platform/*.d platform/*.o)) \
+		$(PROGRAM).8 $(PROGRAM).8.html $(BUILD_DETAILS_FILE)
 	@+$(MAKE) -C util/ich_descriptors_tool/ clean
 
 install: $(PROGRAM)$(EXEC_SUFFIX) $(PROGRAM).8
@@ -1002,11 +981,11 @@ install: $(PROGRAM)$(EXEC_SUFFIX) $(PROGRAM).8
 	$(INSTALL) -m 0755 $(PROGRAM)$(EXEC_SUFFIX) $(DESTDIR)$(PREFIX)/sbin
 	$(INSTALL) -m 0644 $(PROGRAM).8 $(DESTDIR)$(MANDIR)/man8
 
-libinstall: libflashrom.a libflashrom.h
+libinstall: libflashrom.a include/libflashrom.h
 	mkdir -p $(DESTDIR)$(PREFIX)/lib
 	$(INSTALL) -m 0644 libflashrom.a $(DESTDIR)$(PREFIX)/lib
 	mkdir -p $(DESTDIR)$(PREFIX)/include
-	$(INSTALL) -m 0644 libflashrom.h $(DESTDIR)$(PREFIX)/include
+	$(INSTALL) -m 0644 include/libflashrom.h $(DESTDIR)$(PREFIX)/include
 
 _export: $(PROGRAM).8
 	@rm -rf "$(EXPORTDIR)/flashrom-$(RELEASENAME)"

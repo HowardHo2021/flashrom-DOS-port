@@ -46,11 +46,22 @@
  */
 
 /* Changed HSFC Control bits */
+/*
+ * 4 bits to represents the FCYCLE operation for PCH as:
+ * 0: SPI Read
+ * 2: SPI Write
+ * 3: SPI Erase 4K
+ * 4: SPI Erase 64K
+ * 6: SPI RDID
+ * 7: SPI Write Status
+ * 8: SPI Read Status
+  */
+#define PCH100_HSFC_FCYCLE_BIT_WIDTH	0xf
 #define PCH100_HSFC_FCYCLE_OFF	(17 - 16)	/* 1-4: FLASH Cycle */
-#define PCH100_HSFC_FCYCLE	(0xf << PCH100_HSFC_FCYCLE_OFF)
+#define PCH100_HSFC_FCYCLE	HSFC_FCYCLE_MASK(PCH100_HSFC_FCYCLE_BIT_WIDTH)
 /* New HSFC Control bit */
-#define HSFC_WET_OFF		(21 - 16)	/* 5: Write Enable Type */
-#define HSFC_WET		(0x1 << HSFC_WET_OFF)
+#define PCH100_HSFC_WET_OFF	(21 - 16)	/* 5: Write Enable Type */
+#define PCH100_HSFC_WET		(0x1 << PCH100_HSFC_WET_OFF)
 
 #define PCH100_FADDR_FLA	0x07ffffff
 
@@ -107,11 +118,25 @@
 #define ICH9_REG_HSFC		0x06	/* 16 Bits Hardware Sequencing Flash Control */
 #define HSFC_FGO_OFF		0	/* 0: Flash Cycle Go */
 #define HSFC_FGO		(0x1 << HSFC_FGO_OFF)
+/*
+ * 2 bits to represents the FCYCLE operation for ICH9 as:
+ * 0: SPI Read
+ * 2: SPI Write
+ * 3: SPI Block Erase
+ */
+#define ICH9_HSFC_FCYCLE_BIT_WIDTH	3
 #define HSFC_FCYCLE_OFF		1	/* 1-2: FLASH Cycle */
-#define HSFC_FCYCLE		(0x3 << HSFC_FCYCLE_OFF)
+#define HSFC_FCYCLE_MASK(n)	((n) << HSFC_FCYCLE_OFF)
+#define HSFC_FCYCLE		HSFC_FCYCLE_MASK(ICH9_HSFC_FCYCLE_BIT_WIDTH)
+#define HSFC_CYCLE_READ		HSFC_FCYCLE_MASK(0)
+#define HSFC_CYCLE_WRITE	HSFC_FCYCLE_MASK(2)
+#define HSFC_CYCLE_BLOCK_ERASE	HSFC_FCYCLE_MASK(3)
+#define HSFC_CYCLE_WR_STATUS	HSFC_FCYCLE_MASK(7)
+#define HSFC_CYCLE_RD_STATUS	HSFC_FCYCLE_MASK(8)
 					/* 3-7: reserved */
 #define HSFC_FDBC_OFF		8	/* 8-13: Flash Data Byte Count */
 #define HSFC_FDBC		(0x3f << HSFC_FDBC_OFF)
+#define HSFC_FDBC_VAL(n)	(((n) << HSFC_FDBC_OFF) & HSFC_FDBC)
 					/* 14: reserved */
 #define HSFC_SME_OFF		15	/* 15: SPI SMI# Enable */
 #define HSFC_SME		(0x1 << HSFC_SME_OFF)
@@ -412,8 +437,7 @@ static void prettyprint_opcodes(OPCODES *ops)
 		 ops->preop[1]);
 }
 
-#define _pprint_reg(bit, mask, off, val, sep) msg_pdbg("%s=%d" sep, #bit, (val & mask) >> off)
-#define pprint_reg(reg, bit, val, sep) _pprint_reg(bit, reg##_##bit, reg##_##bit##_OFF, val, sep)
+#define pprint_reg(reg, bit, val, sep) msg_pdbg("%s=%d" sep, #bit, (val & reg##_##bit) >> reg##_##bit##_OFF)
 
 static void prettyprint_ich9_reg_hsfs(uint16_t reg_val, enum ich_chipset ich_gen)
 {
@@ -463,8 +487,8 @@ static void prettyprint_ich9_reg_hsfc(uint16_t reg_val, enum ich_chipset ich_gen
 	case CHIPSET_400_SERIES_COMET_POINT:
 	case CHIPSET_500_SERIES_TIGER_POINT:
 	case CHIPSET_ELKHART_LAKE:
-		_pprint_reg(HSFC, PCH100_HSFC_FCYCLE, PCH100_HSFC_FCYCLE_OFF, reg_val, ", ");
-		pprint_reg(HSFC, WET, reg_val, ", ");
+		pprint_reg(PCH100_HSFC, FCYCLE, reg_val, ", ");
+		pprint_reg(PCH100_HSFC, WET, reg_val, ", ");
 		break;
 	default:
 		pprint_reg(HSFC, FCYCLE, reg_val, ", ");
@@ -974,7 +998,7 @@ static int ich9_run_opcode(OPCODE op, uint32_t offset,
 	}
 
 	/* Program offset in flash into FADDR while preserve the reserved bits
-	 * and clearing the 25. address bit which is only useable in hwseq. */
+	 * and clearing the 25. address bit which is only usable in hwseq. */
 	temp32 = REGREAD32(ICH9_REG_FADDR) & ~0x01FFFFFF;
 	REGWRITE32(ICH9_REG_FADDR, (offset & 0x00FFFFFF) | temp32);
 
@@ -1275,21 +1299,24 @@ static uint32_t ich_hwseq_get_erase_block_size(unsigned int addr)
    Resets all error flags in HSFS.
    Returns 0 if the cycle completes successfully without errors within
    timeout us, 1 on errors. */
-static int ich_hwseq_wait_for_cycle_complete(unsigned int timeout,
-					     unsigned int len,
-					     enum ich_chipset ich_gen)
+static int ich_hwseq_wait_for_cycle_complete(unsigned int len, enum ich_chipset ich_gen)
 {
+	/*
+	 * The SPI bus may be busy due to performing operations from other masters, hence
+	 * introduce the long timeout of 30s to cover the worst case scenarios as well.
+	 */
+	unsigned int timeout_us = 30 * 1000 * 1000;
 	uint16_t hsfs;
 	uint32_t addr;
 
-	timeout /= 8; /* scale timeout duration to counter */
+	timeout_us /= 8; /* scale timeout duration to counter */
 	while ((((hsfs = REGREAD16(ICH9_REG_HSFS)) &
 		 (HSFS_FDONE | HSFS_FCERR)) == 0) &&
-	       --timeout) {
+	       --timeout_us) {
 		programmer_delay(8);
 	}
 	REGWRITE16(ICH9_REG_HSFS, REGREAD16(ICH9_REG_HSFS));
-	if (!timeout) {
+	if (!timeout_us) {
 		addr = REGREAD32(ICH9_REG_FADDR) & hwseq_data.addr_mask;
 		msg_perr("Timeout error between offset 0x%08x and "
 			 "0x%08x (= 0x%08x + %d)!\n",
@@ -1308,6 +1335,78 @@ static int ich_hwseq_wait_for_cycle_complete(unsigned int timeout,
 		prettyprint_ich9_reg_hsfc(REGREAD16(ICH9_REG_HSFC), ich_gen);
 		return 1;
 	}
+	return 0;
+}
+
+static int ich_hwseq_read_status(const struct flashctx *flash, enum flash_reg reg, uint8_t *value)
+{
+	uint16_t hsfc;
+	const int len = 1;
+
+	if (reg != STATUS1) {
+		msg_perr("%s: only supports STATUS1\n", __func__);
+		return -1;
+	}
+	msg_pdbg("Reading Status register\n");
+	ich_hwseq_set_addr(0);
+
+	/* clear FDONE, FCERR, AEL by writing 1 to them (if they are set) */
+	REGWRITE16(ICH9_REG_HSFS, REGREAD16(ICH9_REG_HSFS));
+
+	hsfc = REGREAD16(ICH9_REG_HSFC);
+	hsfc &= ~hwseq_data.hsfc_fcycle; /* set read operation */
+
+	/* read status register */
+	hsfc |= HSFC_CYCLE_RD_STATUS;
+	hsfc &= ~HSFC_FDBC; /* clear byte count */
+
+	/* set byte count */
+	hsfc |= HSFC_FDBC_VAL(len - 1);
+	hsfc |= HSFC_FGO; /* start */
+	REGWRITE16(ICH9_REG_HSFC, hsfc);
+
+	if (ich_hwseq_wait_for_cycle_complete(len, ich_generation)) {
+		msg_perr("Reading Status register failed\n!!");
+		return -1;
+	}
+	ich_read_data(value, len, ICH9_REG_FDATA0);
+
+	return 0;
+}
+
+static int ich_hwseq_write_status(const struct flashctx *flash, enum flash_reg reg, uint8_t value)
+{
+	uint16_t hsfc;
+	const int len = 1;
+
+	if (reg != STATUS1) {
+		msg_perr("%s: only supports STATUS1\n", __func__);
+		return -1;
+	}
+	msg_pdbg("Writing status register\n");
+	ich_hwseq_set_addr(0);
+
+	/* clear FDONE, FCERR, AEL by writing 1 to them (if they are set) */
+	REGWRITE16(ICH9_REG_HSFS, REGREAD16(ICH9_REG_HSFS));
+
+	ich_fill_data(&value, len, ICH9_REG_FDATA0);
+	hsfc = REGREAD16(ICH9_REG_HSFC);
+	hsfc &= ~hwseq_data.hsfc_fcycle; /* clear operation */
+
+	/* write status register */
+	hsfc |= HSFC_CYCLE_WR_STATUS;
+	hsfc &= ~HSFC_FDBC; /* clear byte count */
+
+	/* set byte count */
+	hsfc |= HSFC_FDBC_VAL(len - 1);
+	hsfc |= HSFC_FGO; /* start */
+	REGWRITE16(ICH9_REG_HSFC, hsfc);
+
+	if (ich_hwseq_wait_for_cycle_complete(len, ich_generation)) {
+		msg_perr("Writing Status register failed\n!!");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -1371,7 +1470,6 @@ static int ich_hwseq_block_erase(struct flashctx *flash, unsigned int addr,
 {
 	uint32_t erase_block;
 	uint16_t hsfc;
-	uint32_t timeout = 5000 * 1000; /* 5 s for max 64 kB */
 
 	erase_block = ich_hwseq_get_erase_block_size(addr);
 	if (len != erase_block) {
@@ -1402,15 +1500,20 @@ static int ich_hwseq_block_erase(struct flashctx *flash, unsigned int addr,
 	/* make sure FDONE, FCERR, AEL are cleared by writing 1 to them */
 	REGWRITE16(ICH9_REG_HSFS, REGREAD16(ICH9_REG_HSFS));
 
+	if (REGREAD8(ICH9_REG_HSFS) & HSFS_SCIP) {
+		msg_perr("Error: SCIP bit is unexpectedly set.\n");
+		return -1;
+	}
+
 	hsfc = REGREAD16(ICH9_REG_HSFC);
 	hsfc &= ~hwseq_data.hsfc_fcycle; /* clear operation */
-	hsfc |= (0x3 << HSFC_FCYCLE_OFF); /* set erase operation */
+	hsfc |= HSFC_CYCLE_BLOCK_ERASE; /* set erase operation */
 	hsfc |= HSFC_FGO; /* start */
 	msg_pdbg("HSFC used for block erasing: ");
 	prettyprint_ich9_reg_hsfc(hsfc, ich_generation);
 	REGWRITE16(ICH9_REG_HSFC, hsfc);
 
-	if (ich_hwseq_wait_for_cycle_complete(timeout, len, ich_generation))
+	if (ich_hwseq_wait_for_cycle_complete(len, ich_generation))
 		return -1;
 	return 0;
 }
@@ -1419,7 +1522,6 @@ static int ich_hwseq_read(struct flashctx *flash, uint8_t *buf,
 			  unsigned int addr, unsigned int len)
 {
 	uint16_t hsfc;
-	uint16_t timeout = 100 * 60;
 	uint8_t block_len;
 
 	if (addr + len > flash->chip->total_size * 1024) {
@@ -1439,15 +1541,22 @@ static int ich_hwseq_read(struct flashctx *flash, uint8_t *buf,
 		block_len = min(block_len, 256 - (addr & 0xFF));
 
 		ich_hwseq_set_addr(addr);
+
+		if (REGREAD8(ICH9_REG_HSFS) & HSFS_SCIP) {
+			msg_perr("Error: SCIP bit is unexpectedly set.\n");
+			return -1;
+		}
+
 		hsfc = REGREAD16(ICH9_REG_HSFC);
 		hsfc &= ~hwseq_data.hsfc_fcycle; /* set read operation */
 		hsfc &= ~HSFC_FDBC; /* clear byte count */
+		hsfc |= HSFC_CYCLE_READ; /* set read operation */
 		/* set byte count */
-		hsfc |= (((block_len - 1) << HSFC_FDBC_OFF) & HSFC_FDBC);
+		hsfc |= HSFC_FDBC_VAL(block_len - 1);
 		hsfc |= HSFC_FGO; /* start */
 		REGWRITE16(ICH9_REG_HSFC, hsfc);
 
-		if (ich_hwseq_wait_for_cycle_complete(timeout, block_len, ich_generation))
+		if (ich_hwseq_wait_for_cycle_complete(block_len, ich_generation))
 			return 1;
 		ich_read_data(buf, block_len, ICH9_REG_FDATA0);
 		addr += block_len;
@@ -1460,7 +1569,6 @@ static int ich_hwseq_read(struct flashctx *flash, uint8_t *buf,
 static int ich_hwseq_write(struct flashctx *flash, const uint8_t *buf, unsigned int addr, unsigned int len)
 {
 	uint16_t hsfc;
-	uint16_t timeout = 100 * 60;
 	uint8_t block_len;
 
 	if (addr + len > flash->chip->total_size * 1024) {
@@ -1480,16 +1588,22 @@ static int ich_hwseq_write(struct flashctx *flash, const uint8_t *buf, unsigned 
 		/* as well as flash chip page borders as demanded in the Intel datasheets. */
 		block_len = min(block_len, 256 - (addr & 0xFF));
 		ich_fill_data(buf, block_len, ICH9_REG_FDATA0);
+
+		if (REGREAD8(ICH9_REG_HSFS) & HSFS_SCIP) {
+			msg_perr("Error: SCIP bit is unexpectedly set.\n");
+			return -1;
+		}
+
 		hsfc = REGREAD16(ICH9_REG_HSFC);
 		hsfc &= ~hwseq_data.hsfc_fcycle; /* clear operation */
-		hsfc |= (0x2 << HSFC_FCYCLE_OFF); /* set write operation */
+		hsfc |= HSFC_CYCLE_WRITE; /* set write operation */
 		hsfc &= ~HSFC_FDBC; /* clear byte count */
 		/* set byte count */
-		hsfc |= (((block_len - 1) << HSFC_FDBC_OFF) & HSFC_FDBC);
+		hsfc |= HSFC_FDBC_VAL(block_len - 1);
 		hsfc |= HSFC_FGO; /* start */
 		REGWRITE16(ICH9_REG_HSFC, hsfc);
 
-		if (ich_hwseq_wait_for_cycle_complete(timeout, block_len, ich_generation))
+		if (ich_hwseq_wait_for_cycle_complete(block_len, ich_generation))
 			return -1;
 		addr += block_len;
 		buf += block_len;
@@ -1558,6 +1672,11 @@ static int ich_spi_send_multicommand(const struct flashctx *flash,
 	return ret;
 }
 
+static bool ich_spi_probe_opcode(struct flashctx *flash, uint8_t opcode)
+{
+	return find_opcode(curopcodes, opcode) >= 0;
+}
+
 #define ICH_BMWAG(x) ((x >> 24) & 0xff)
 #define ICH_BMRAG(x) ((x >> 16) & 0xff)
 #define ICH_BRWA(x)  ((x >>  8) & 0xff)
@@ -1567,12 +1686,11 @@ static const enum ich_access_protection access_perms_to_protection[] = {
 	LOCKED, WRITE_PROT, READ_PROT, NO_PROT
 };
 static const char *const access_names[] = {
-	"locked", "read-only", "write-only", "read-write"
+	"read-write", "write-only", "read-only", "locked"
 };
 
 static enum ich_access_protection ich9_handle_frap(uint32_t frap, unsigned int i)
 {
-	const int rwperms_unknown = ARRAY_SIZE(access_names);
 	static const char *const region_names[] = {
 		"Flash Descriptor", "BIOS", "Management Engine",
 		"Gigabit Ethernet", "Platform Data", "Device Expansion",
@@ -1581,22 +1699,12 @@ static enum ich_access_protection ich9_handle_frap(uint32_t frap, unsigned int i
 	const char *const region_name = i < ARRAY_SIZE(region_names) ? region_names[i] : "unknown";
 
 	uint32_t base, limit;
-	int rwperms;
+	unsigned int rwperms_idx;
+	enum ich_access_protection rwperms;
 	const int offset = i < 12
 		? ICH9_REG_FREG0 + i * 4
 		: APL_REG_FREG12 + (i - 12) * 4;
 	uint32_t freg = mmio_readl(ich_spibar + offset);
-
-	if (i < 8) {
-		rwperms = (((ICH_BRWA(frap) >> i) & 1) << 1) |
-			  (((ICH_BRRA(frap) >> i) & 1) << 0);
-	} else {
-		/* Datasheets don't define any access bits for regions > 7. We
-		   can't rely on the actual descriptor settings either as there
-		   are several overrides for them (those by other masters are
-		   not even readable by us, *shrug*). */
-		rwperms = rwperms_unknown;
-	}
 
 	base  = ICH_FREG_BASE(freg);
 	limit = ICH_FREG_LIMIT(freg);
@@ -1607,20 +1715,24 @@ static enum ich_access_protection ich9_handle_frap(uint32_t frap, unsigned int i
 		return NO_PROT;
 	}
 	msg_pdbg("0x%02X: 0x%08x ", offset, freg);
-	if (rwperms == 0x3) {
-		msg_pdbg("FREG%u: %s region (0x%08x-0x%08x) is %s.\n", i,
-			 region_name, base, limit, access_names[rwperms]);
-		return NO_PROT;
-	}
-	if (rwperms == rwperms_unknown) {
-		msg_pdbg("FREG%u: %s region (0x%08x-0x%08x) has unknown permissions.\n",
-			 i, region_name, base, limit);
-		return NO_PROT;
-	}
 
+	if (i < 8) {
+		rwperms_idx = (((ICH_BRWA(frap) >> i) & 1) << 1) |
+			      (((ICH_BRRA(frap) >> i) & 1) << 0);
+		rwperms = access_perms_to_protection[rwperms_idx];
+	} else {
+		/* Datasheets don't define any access bits for regions > 7. We
+		   can't rely on the actual descriptor settings either as there
+		   are several overrides for them (those by other masters are
+		   not even readable by us, *shrug*). */
+		msg_pdbg("FREG%u: %s region (0x%08x-0x%08x) has unknown permissions.\n",
+				i, region_name, base, limit);
+		return NO_PROT;
+	}
 	msg_pinfo("FREG%u: %s region (0x%08x-0x%08x) is %s.\n", i,
 		  region_name, base, limit, access_names[rwperms]);
-	return access_perms_to_protection[rwperms];
+
+	return rwperms;
 }
 
 	/* In contrast to FRAP and the master section of the descriptor the bits
@@ -1636,14 +1748,15 @@ static enum ich_access_protection ich9_handle_pr(const size_t reg_pr0, unsigned 
 {
 	uint8_t off = reg_pr0 + (i * 4);
 	uint32_t pr = mmio_readl(ich_spibar + off);
-	unsigned int rwperms = ICH_PR_PERMS(pr);
+	unsigned int rwperms_idx = ICH_PR_PERMS(pr);
+	enum ich_access_protection rwperms = access_perms_to_protection[rwperms_idx];
 
 	/* From 5 on we have GPR registers and start from 0 again. */
 	const char *const prefix = i >= 5 ? "G" : "";
 	if (i >= 5)
 		i -= 5;
 
-	if (rwperms == 0x3) {
+	if (rwperms == NO_PROT) {
 		msg_pdbg2("0x%02X: 0x%08x (%sPR%u is unused)\n", off, pr, prefix, i);
 		return NO_PROT;
 	}
@@ -1651,7 +1764,8 @@ static enum ich_access_protection ich9_handle_pr(const size_t reg_pr0, unsigned 
 	msg_pdbg("0x%02X: 0x%08x ", off, pr);
 	msg_pwarn("%sPR%u: Warning: 0x%08x-0x%08x is %s.\n", prefix, i, ICH_FREG_BASE(pr),
 		  ICH_FREG_LIMIT(pr), access_names[rwperms]);
-	return access_perms_to_protection[rwperms];
+
+	return rwperms;
 }
 
 /* Set/Clear the read and write protection enable bits of PR register @i
@@ -1678,32 +1792,35 @@ static void ich9_set_pr(const size_t reg_pr0, int i, int read_prot, int write_pr
 }
 
 static const struct spi_master spi_master_ich7 = {
-	.max_data_read = 64,
-	.max_data_write = 64,
-	.command = ich_spi_send_command,
-	.multicommand = ich_spi_send_multicommand,
-	.read = default_spi_read,
-	.write_256 = default_spi_write_256,
-	.write_aai = default_spi_write_aai,
+	.max_data_read	= 64,
+	.max_data_write	= 64,
+	.command	= ich_spi_send_command,
+	.multicommand	= ich_spi_send_multicommand,
+	.read		= default_spi_read,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
 };
 
 static const struct spi_master spi_master_ich9 = {
-	.max_data_read = 64,
-	.max_data_write = 64,
-	.command = ich_spi_send_command,
-	.multicommand = ich_spi_send_multicommand,
-	.read = default_spi_read,
-	.write_256 = default_spi_write_256,
-	.write_aai = default_spi_write_aai,
+	.max_data_read	= 64,
+	.max_data_write	= 64,
+	.command	= ich_spi_send_command,
+	.multicommand	= ich_spi_send_multicommand,
+	.read		= default_spi_read,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
+	.probe_opcode	= ich_spi_probe_opcode,
 };
 
 static const struct opaque_master opaque_master_ich_hwseq = {
-	.max_data_read = 64,
-	.max_data_write = 64,
-	.probe = ich_hwseq_probe,
-	.read = ich_hwseq_read,
-	.write = ich_hwseq_write,
-	.erase = ich_hwseq_block_erase,
+	.max_data_read	= 64,
+	.max_data_write	= 64,
+	.probe		= ich_hwseq_probe,
+	.read		= ich_hwseq_read,
+	.write		= ich_hwseq_write,
+	.erase		= ich_hwseq_block_erase,
+	.read_register	= ich_hwseq_read_status,
+	.write_register	= ich_hwseq_write_status,
 };
 
 static int init_ich7_spi(void *spibar, enum ich_chipset ich_gen)
@@ -1746,7 +1863,7 @@ enum ich_spi_mode {
 
 static int get_ich_spi_mode_param(enum ich_spi_mode *ich_spi_mode)
 {
-	char *const arg = extract_programmer_param("ich_spi_mode");
+	char *const arg = extract_programmer_param_str("ich_spi_mode");
 	if (arg && !strcmp(arg, "hwseq")) {
 		*ich_spi_mode = ich_hwseq;
 		msg_pspew("user selected hwseq\n");
@@ -1781,8 +1898,11 @@ static void init_chipset_properties(struct swseq_data *swseq, struct hwseq_data 
 	case CHIPSET_300_SERIES_CANNON_POINT:
 	case CHIPSET_400_SERIES_COMET_POINT:
 	case CHIPSET_500_SERIES_TIGER_POINT:
+	case CHIPSET_600_SERIES_ALDER_POINT:
+	case CHIPSET_METEOR_LAKE:
 	case CHIPSET_APOLLO_LAKE:
 	case CHIPSET_GEMINI_LAKE:
+	case CHIPSET_JASPER_LAKE:
 	case CHIPSET_ELKHART_LAKE:
 		*num_pr			= 6;	/* Includes GPR0 */
 		*reg_pr0		= PCH100_REG_FPR0;
@@ -1817,8 +1937,11 @@ static void init_chipset_properties(struct swseq_data *swseq, struct hwseq_data 
 	case CHIPSET_300_SERIES_CANNON_POINT:
 	case CHIPSET_400_SERIES_COMET_POINT:
 	case CHIPSET_500_SERIES_TIGER_POINT:
+	case CHIPSET_600_SERIES_ALDER_POINT:
+	case CHIPSET_METEOR_LAKE:
 	case CHIPSET_APOLLO_LAKE:
 	case CHIPSET_GEMINI_LAKE:
+	case CHIPSET_JASPER_LAKE:
 	case CHIPSET_ELKHART_LAKE:
 		*num_freg = 16;
 		break;
@@ -1875,8 +1998,11 @@ static int init_ich_default(void *spibar, enum ich_chipset ich_gen)
 	case CHIPSET_300_SERIES_CANNON_POINT:
 	case CHIPSET_400_SERIES_COMET_POINT:
 	case CHIPSET_500_SERIES_TIGER_POINT:
+	case CHIPSET_600_SERIES_ALDER_POINT:
+	case CHIPSET_METEOR_LAKE:
 	case CHIPSET_APOLLO_LAKE:
 	case CHIPSET_GEMINI_LAKE:
+	case CHIPSET_JASPER_LAKE:
 	case CHIPSET_ELKHART_LAKE:
 		tmp = mmio_readl(spibar + PCH100_REG_DLOCK);
 		msg_pdbg("0x0c: 0x%08x (DLOCK)\n", tmp);
@@ -1952,8 +2078,11 @@ static int init_ich_default(void *spibar, enum ich_chipset ich_gen)
 		case CHIPSET_300_SERIES_CANNON_POINT:
 		case CHIPSET_400_SERIES_COMET_POINT:
 		case CHIPSET_500_SERIES_TIGER_POINT:
+		case CHIPSET_600_SERIES_ALDER_POINT:
+		case CHIPSET_METEOR_LAKE:
 		case CHIPSET_APOLLO_LAKE:
 		case CHIPSET_GEMINI_LAKE:
+		case CHIPSET_JASPER_LAKE:
 		case CHIPSET_BAYTRAIL:
 		case CHIPSET_ELKHART_LAKE:
 			break;
@@ -1988,8 +2117,11 @@ static int init_ich_default(void *spibar, enum ich_chipset ich_gen)
 		case CHIPSET_300_SERIES_CANNON_POINT:
 		case CHIPSET_400_SERIES_COMET_POINT:
 		case CHIPSET_500_SERIES_TIGER_POINT:
+		case CHIPSET_600_SERIES_ALDER_POINT:
+		case CHIPSET_METEOR_LAKE:
 		case CHIPSET_APOLLO_LAKE:
 		case CHIPSET_GEMINI_LAKE:
+		case CHIPSET_JASPER_LAKE:
 		case CHIPSET_ELKHART_LAKE:
 			break;
 		default:
@@ -2022,7 +2154,8 @@ static int init_ich_default(void *spibar, enum ich_chipset ich_gen)
 	    (ich_gen == CHIPSET_100_SERIES_SUNRISE_POINT ||
 	     ich_gen == CHIPSET_300_SERIES_CANNON_POINT ||
 	     ich_gen == CHIPSET_400_SERIES_COMET_POINT ||
-	     ich_gen == CHIPSET_500_SERIES_TIGER_POINT)) {
+	     ich_gen == CHIPSET_500_SERIES_TIGER_POINT ||
+	     ich_gen == CHIPSET_600_SERIES_ALDER_POINT)) {
 		msg_pdbg("Enabling hardware sequencing by default for 100+ series PCH.\n");
 		ich_spi_mode = ich_hwseq;
 	}
@@ -2030,8 +2163,10 @@ static int init_ich_default(void *spibar, enum ich_chipset ich_gen)
 	if (ich_spi_mode == ich_auto &&
 	    (ich_gen == CHIPSET_APOLLO_LAKE ||
 	     ich_gen == CHIPSET_GEMINI_LAKE ||
-	     ich_gen == CHIPSET_ELKHART_LAKE)) {
-		msg_pdbg("Enabling hardware sequencing by default for Apollo/Gemini/Elkhart Lake.\n");
+	     ich_gen == CHIPSET_JASPER_LAKE ||
+	     ich_gen == CHIPSET_ELKHART_LAKE ||
+	     ich_gen == CHIPSET_METEOR_LAKE)) {
+		msg_pdbg("Enabling hardware sequencing by default for Apollo/Gemini/Jasper/Elkhart/Meteor Lake.\n");
 		ich_spi_mode = ich_hwseq;
 	}
 
@@ -2081,13 +2216,14 @@ int ich_init_spi(void *spibar, enum ich_chipset ich_gen)
 }
 
 static const struct spi_master spi_master_via = {
-	.max_data_read = 16,
-	.max_data_write = 16,
-	.command = ich_spi_send_command,
-	.multicommand = ich_spi_send_multicommand,
-	.read = default_spi_read,
-	.write_256 = default_spi_write_256,
-	.write_aai = default_spi_write_aai,
+	.max_data_read	= 16,
+	.max_data_write	= 16,
+	.command	= ich_spi_send_command,
+	.multicommand	= ich_spi_send_multicommand,
+	.read		= default_spi_read,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
+	.probe_opcode	= ich_spi_probe_opcode,
 };
 
 int via_init_spi(uint32_t mmio_base)

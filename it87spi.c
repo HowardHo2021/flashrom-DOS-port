@@ -133,9 +133,20 @@ static int it8716f_spi_page_program(struct flashctx *flash, const uint8_t *buf, 
 	OUTB(0, data->flashport);
 	/* Wait until the Write-In-Progress bit is cleared.
 	 * This usually takes 1-10 ms, so wait in 1 ms steps.
+	 *
+	 * FIXME: This should timeout after some number of retries.
 	 */
-	while (spi_read_status_register(flash) & SPI_SR_WIP)
+	while (true) {
+		uint8_t status;
+		int ret = spi_read_register(flash, STATUS1, &status);
+		if (ret)
+		       return ret;
+
+		if((status & SPI_SR_WIP) == 0)
+			return 0;
+
 		programmer_delay(1000);
+	}
 	return 0;
 }
 
@@ -277,7 +288,10 @@ static int it8716f_spi_chip_write_256(struct flashctx *flash, const uint8_t *buf
 		}
 
 		while (len >= chip->page_size) {
-			it8716f_spi_page_program(flash, buf, start);
+			int ret = it8716f_spi_page_program(flash, buf, start);
+			if (ret)
+				return ret;
+			update_progress(flash, FLASHROM_PROGRESS_WRITE, chip->page_size - len, chip->page_size);
 			start += chip->page_size;
 			len -= chip->page_size;
 			buf += chip->page_size;
@@ -304,6 +318,7 @@ static const struct spi_master spi_master_it87xx = {
 	.write_256	= it8716f_spi_chip_write_256,
 	.write_aai	= spi_chip_write_1,
 	.shutdown	= it8716f_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static uint16_t it87spi_probe(uint16_t port)
@@ -313,7 +328,7 @@ static uint16_t it87spi_probe(uint16_t port)
 
 	enter_conf_mode_ite(port);
 
-	char *param = extract_programmer_param("dualbiosindex");
+	char *param = extract_programmer_param_str("dualbiosindex");
 	if (param != NULL) {
 		sio_write(port, 0x07, 0x07); /* Select GPIO LDN */
 		tmp = sio_read(port, 0xEF);
@@ -379,7 +394,7 @@ static uint16_t it87spi_probe(uint16_t port)
 	flashport |= sio_read(port, 0x65);
 	msg_pdbg("Serial flash port 0x%04x\n", flashport);
 	/* Non-default port requested? */
-	param = extract_programmer_param("it87spiport");
+	param = extract_programmer_param_str("it87spiport");
 	if (param) {
 		char *endptr = NULL;
 		unsigned long forced_flashport;
@@ -435,21 +450,10 @@ int init_superio_ite(void)
 			continue;
 
 		switch (superios[i].model) {
-		case 0x8500:
-		case 0x8502:
-		case 0x8510:
-		case 0x8511:
-		case 0x8512:
-			/* FIXME: This should be enabled, but we need a check
-			 * for laptop whitelisting due to the amount of things
-			 * which can go wrong if the EC firmware does not
-			 * implement the interface we want.
-			 */
-			//it85xx_spi_init(superios[i]);
-			break;
 		case 0x8705:
 			ret |= it8705f_write_enable(superios[i].port);
 			break;
+		case 0x8686:
 		case 0x8716:
 		case 0x8718:
 		case 0x8720:

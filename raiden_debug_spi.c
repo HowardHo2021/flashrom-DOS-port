@@ -343,6 +343,7 @@
 #include "usb_device.h"
 
 #include <libusb.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -398,6 +399,10 @@ enum usb_spi_error {
 	USB_SPI_UNKNOWN_ERROR           = 0x8000,
 };
 
+/* Corresponds with 'enum usb_spi_request' in,
+ * platform/cr50/chip/g/usb_spi.h and,
+ * platform/ec/chip/stm32/usb_spi.h.
+ */
 enum raiden_debug_spi_request {
 	RAIDEN_DEBUG_SPI_REQ_ENABLE           = 0x0000,
 	RAIDEN_DEBUG_SPI_REQ_DISABLE          = 0x0001,
@@ -983,6 +988,22 @@ static int get_spi_config_v2(struct raiden_debug_spi_data *ctx_data)
 			return status;
 		}
 
+		/*
+		 * Check if we received an error from the device. An error will have no
+		 * response data, just the packet_id and status_code.
+		 */
+		const size_t err_packet_size = sizeof(struct usb_spi_response_v2) -
+			USB_SPI_PAYLOAD_SIZE_V2_RESPONSE;
+		if (rsp_config.packet_size == err_packet_size &&
+				rsp_config.packet_v2.rsp_start.status_code !=
+				USB_SPI_SUCCESS) {
+			status = rsp_config.packet_v2.rsp_start.status_code;
+			if (status == USB_SPI_DISABLED) {
+				msg_perr("Raiden: Target SPI bridge is disabled (is WP enabled?)\n");
+				return status;
+			}
+		}
+
 		msg_perr("Raiden: Packet is not a valid config\n"
 		         "    config attempt = %d\n"
 		         "    packet id      = %u\n"
@@ -1290,15 +1311,16 @@ static int raiden_debug_spi_shutdown(void * data)
 }
 
 static const struct spi_master spi_master_raiden_debug = {
-	.features       = SPI_MASTER_4BA,
-	.max_data_read  = 0,
-	.max_data_write = 0,
-	.command        = NULL,
-	.multicommand   = default_spi_send_multicommand,
-	.read           = default_spi_read,
-	.write_256      = default_spi_write_256,
-	.write_aai      = default_spi_write_aai,
+	.features	= SPI_MASTER_4BA,
+	.max_data_read	= 0,
+	.max_data_write	= 0,
+	.command	= NULL,
+	.multicommand	= default_spi_send_multicommand,
+	.read		= default_spi_read,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
 	.shutdown	= raiden_debug_spi_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static int match_endpoint(struct libusb_endpoint_descriptor const *descriptor,
@@ -1410,11 +1432,13 @@ static int configure_protocol(struct raiden_debug_spi_data *ctx_data)
 static int get_ap_request_type(void)
 {
 	int ap_request = RAIDEN_DEBUG_SPI_REQ_ENABLE_AP;
-	char *custom_rst_str = extract_programmer_param("custom_rst");
+	char *custom_rst_str = extract_programmer_param_str("custom_rst");
 	if (custom_rst_str) {
-		if (!strcasecmp(custom_rst_str, "true"))
+		if (!strcasecmp(custom_rst_str, "true")) {
 			ap_request = RAIDEN_DEBUG_SPI_REQ_ENABLE_AP_CUSTOM;
-		else {
+		} else if (!strcasecmp(custom_rst_str, "false")) {
+			ap_request = RAIDEN_DEBUG_SPI_REQ_ENABLE_AP;
+		} else {
 			msg_perr("Invalid custom rst param: %s\n",
 			         custom_rst_str);
 			ap_request = -1;
@@ -1426,9 +1450,13 @@ static int get_ap_request_type(void)
 
 static int get_target(void)
 {
+	/**
+	 * REQ_ENABLE doesn't specify a target bus, and will be rejected
+	 * by adapters that support more than one target.
+	 */
 	int request_enable = RAIDEN_DEBUG_SPI_REQ_ENABLE;
 
-	char *target_str = extract_programmer_param("target");
+	char *target_str = extract_programmer_param_str("target");
 	if (target_str) {
 		if (!strcasecmp(target_str, "ap"))
 			request_enable = get_ap_request_type();
@@ -1457,7 +1485,7 @@ static void free_dev_list(struct usb_device **dev_lst)
 static int raiden_debug_spi_init(void)
 {
 	struct usb_match match;
-	char *serial = extract_programmer_param("serial");
+	char *serial = extract_programmer_param_str("serial");
 	struct usb_device *current;
 	struct usb_device *device = NULL;
 	int found = 0;

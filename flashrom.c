@@ -30,7 +30,6 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <ctype.h>
-#include <getopt.h>
 #if HAVE_UTSNAME == 1
 #include <sys/utsname.h>
 #endif
@@ -326,7 +325,7 @@ static char *extract_param(const char *const *haystack, const char *needle, cons
 	return opt;
 }
 
-char *extract_programmer_param(const char *param_name)
+char *extract_programmer_param_str(const char *param_name)
 {
 	return extract_param(&programmer_param, param_name, ",");
 }
@@ -481,7 +480,7 @@ static int need_erase_gran_bytes(const uint8_t *have, const uint8_t *want, unsig
  * @gran	write granularity (enum, not count)
  * @return      0 if no erase is needed, 1 otherwise
  */
-int need_erase(const uint8_t *have, const uint8_t *want, unsigned int len,
+static int need_erase(const uint8_t *have, const uint8_t *want, unsigned int len,
                enum write_granularity gran, const uint8_t erased_value)
 {
 	int result = 0;
@@ -624,7 +623,7 @@ static unsigned int get_next_write(const uint8_t *have, const uint8_t *want, uns
 	return first_len;
 }
 
-/* Returns the number of busses commonly supported by the current programmer and flash chip where the latter
+/* Returns the number of buses commonly supported by the current programmer and flash chip where the latter
  * can not be completely accessed due to size/address limits of the programmer. */
 unsigned int count_max_decode_exceedings(const struct flashctx *flash)
 {
@@ -1071,50 +1070,17 @@ static int read_by_layout(struct flashctx *const flashctx, uint8_t *const buffer
 	return 0;
 }
 
-int read_flash_to_file(struct flashctx *flash, const char *filename)
-{
-	unsigned long size = flash->chip->total_size * 1024;
-	unsigned char *buf = calloc(size, sizeof(unsigned char));
-	int ret = 0;
-
-	msg_cinfo("Reading flash... ");
-	if (!buf) {
-		msg_gerr("Memory allocation failed!\n");
-		msg_cinfo("FAILED.\n");
-		return 1;
-	}
-	if (!flash->chip->read) {
-		msg_cerr("No read function available for this flash chip.\n");
-		ret = 1;
-		goto out_free;
-	}
-	if (read_by_layout(flash, buf)) {
-		msg_cerr("Read operation failed!\n");
-		ret = 1;
-		goto out_free;
-	}
-	if (write_buf_to_include_args(flash, buf)) {
-		ret = 1;
-		goto out_free;
-	}
-
-	if (filename)
-		ret = write_buf_to_file(buf, size, filename);
-out_free:
-	free(buf);
-	msg_cinfo("%s.\n", ret ? "FAILED" : "done");
-	return ret;
-}
-
 /* Even if an error is found, the function will keep going and check the rest. */
 static int selfcheck_eraseblocks(const struct flashchip *chip)
 {
 	int i, j, k;
 	int ret = 0;
+	unsigned int prev_eraseblock_count = chip->total_size * 1024;
 
 	for (k = 0; k < NUM_ERASEFUNCTIONS; k++) {
 		unsigned int done = 0;
 		struct block_eraser eraser = chip->block_erasers[k];
+		unsigned int curr_eraseblock_count = 0;
 
 		for (i = 0; i < NUM_ERASEREGIONS; i++) {
 			/* Blocks with zero size are bugs in flashchips.c. */
@@ -1137,6 +1103,7 @@ static int selfcheck_eraseblocks(const struct flashchip *chip)
 			}
 			done += eraser.eraseblocks[i].count *
 				eraser.eraseblocks[i].size;
+			curr_eraseblock_count += eraser.eraseblocks[i].count;
 		}
 		/* Empty eraseblock definition with erase function.  */
 		if (!done && eraser.block_erase)
@@ -1168,6 +1135,14 @@ static int selfcheck_eraseblocks(const struct flashchip *chip)
 				ret = 1;
 			}
 		}
+		if(curr_eraseblock_count > prev_eraseblock_count)
+		{
+			msg_gerr("ERROR: Flash chip %s erase function %i is not "
+					"in order. Please report a bug at flashrom@flashrom.org\n",
+					chip->name, k);
+			ret = 1;
+		}
+		prev_eraseblock_count = curr_eraseblock_count;
 	}
 	return ret;
 }
@@ -1646,13 +1621,6 @@ static void print_sysinfo(void)
 void print_buildinfo(void)
 {
 	msg_gdbg("flashrom was built with");
-#if NEED_PCI == 1
-#ifdef PCILIB_VERSION
-	msg_gdbg(" libpci %s,", PCILIB_VERSION);
-#else
-	msg_gdbg(" unknown PCI library,");
-#endif
-#endif
 #ifdef __clang__
 	msg_gdbg(" LLVM Clang");
 #ifdef __clang_version__
@@ -1868,6 +1836,9 @@ int prepare_flash_access(struct flashctx *const flash,
 	if (map_flash(flash) != 0)
 		return 1;
 
+	/* Initialize chip_restore_fn_count before chip unlock calls. */
+	flash->chip_restore_fn_count = 0;
+
 	/* Given the existence of read locks, we want to unlock for read,
 	   erase and write. */
 	if (flash->chip->unlock)
@@ -1875,7 +1846,6 @@ int prepare_flash_access(struct flashctx *const flash,
 
 	flash->address_high_byte = -1;
 	flash->in_4ba_mode = false;
-	flash->chip_restore_fn_count = 0;
 
 	/* Be careful about 4BA chips and broken masters */
 	if (flash->chip->total_size > 16 * 1024 && spi_master_no_4ba_modes(flash)) {
@@ -1909,20 +1879,6 @@ void finalize_flash_access(struct flashctx *const flash)
 	unmap_flash(flash);
 }
 
-/**
- * @addtogroup flashrom-flash
- * @{
- */
-
-/**
- * @brief Erase the specified ROM chip.
- *
- * If a layout is set in the given flash context, only included regions
- * will be erased.
- *
- * @param flashctx The context of the flash chip to erase.
- * @return 0 on success.
- */
 int flashrom_flash_erase(struct flashctx *const flashctx)
 {
 	if (prepare_flash_access(flashctx, false, false, true, false))
@@ -1935,26 +1891,6 @@ int flashrom_flash_erase(struct flashctx *const flashctx)
 	return ret;
 }
 
-/** @} */ /* end flashrom-flash */
-
-/**
- * @defgroup flashrom-ops Operations
- * @{
- */
-
-/**
- * @brief Read the current image from the specified ROM chip.
- *
- * If a layout is set in the specified flash context, only included regions
- * will be read.
- *
- * @param flashctx The context of the flash chip.
- * @param buffer Target buffer to write image to.
- * @param buffer_len Size of target buffer in bytes.
- * @return 0 on success,
- *         2 if buffer_len is too short for the flash chip's contents,
- *         or 1 on any other failure.
- */
 int flashrom_image_read(struct flashctx *const flashctx, void *const buffer, const size_t buffer_len)
 {
 	const size_t flash_size = flashctx->chip->total_size * 1024;
@@ -2004,22 +1940,6 @@ static void combine_image_by_layout(const struct flashctx *const flashctx,
 	memcpy(newcontents + start, oldcontents + start, copy_len);
 }
 
-/**
- * @brief Write the specified image to the ROM chip.
- *
- * If a layout is set in the specified flash context, only erase blocks
- * containing included regions will be touched.
- *
- * @param flashctx The context of the flash chip.
- * @param buffer Source buffer to read image from (may be altered for full verification).
- * @param buffer_len Size of source buffer in bytes.
- * @param refbuffer If given, assume flash chip contains same data as `refbuffer`.
- * @return 0 on success,
- *         4 if buffer_len doesn't match the size of the flash chip,
- *         3 if write was tried but nothing has changed,
- *         2 if write failed and flash contents changed,
- *         or 1 on any other failure.
- */
 int flashrom_image_write(struct flashctx *const flashctx, void *const buffer, const size_t buffer_len,
                          const void *const refbuffer)
 {
@@ -2143,20 +2063,6 @@ _free_ret:
 	return ret;
 }
 
-/**
- * @brief Verify the ROM chip's contents with the specified image.
- *
- * If a layout is set in the specified flash context, only included regions
- * will be verified.
- *
- * @param flashctx The context of the flash chip.
- * @param buffer Source buffer to verify with.
- * @param buffer_len Size of source buffer in bytes.
- * @return 0 on success,
- *         3 if the chip's contents don't match,
- *         2 if buffer_len doesn't match the size of the flash chip,
- *         or 1 on any other failure.
- */
 int flashrom_image_verify(struct flashctx *const flashctx, const void *const buffer, const size_t buffer_len)
 {
 	const struct flashrom_layout *const layout = get_layout(flashctx);
@@ -2187,5 +2093,3 @@ _free_ret:
 	free(curcontents);
 	return ret;
 }
-
-/** @} */ /* end flashrom-ops */

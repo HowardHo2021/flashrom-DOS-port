@@ -291,7 +291,8 @@ static int sp_stream_buffer_op(uint8_t cmd, uint32_t parmlen, uint8_t *parms)
 		return 1;
 	}
 	sp[0] = cmd;
-	memcpy(&(sp[1]), parms, parmlen);
+	if (parms)
+		memcpy(&(sp[1]), parms, parmlen);
 
 	if (sp_streamed_transmit_bytes >= (1 + parmlen + sp_device_serbuf_size)) {
 		if (sp_flush_stream() != 0) {
@@ -445,6 +446,7 @@ static struct spi_master spi_master_serprog = {
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
 	.write_aai	= default_spi_write_aai,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static int sp_check_opbuf_usage(int bytes_to_be_added)
@@ -550,14 +552,14 @@ static void serprog_chip_readn(const struct flashctx *flash, uint8_t * buf,
 }
 
 static const struct par_master par_master_serprog = {
-		.chip_readb		= serprog_chip_readb,
-		.chip_readw		= fallback_chip_readw,
-		.chip_readl		= fallback_chip_readl,
-		.chip_readn		= serprog_chip_readn,
-		.chip_writeb		= serprog_chip_writeb,
-		.chip_writew		= fallback_chip_writew,
-		.chip_writel		= fallback_chip_writel,
-		.chip_writen		= fallback_chip_writen,
+	.chip_readb	= serprog_chip_readb,
+	.chip_readw	= fallback_chip_readw,
+	.chip_readl	= fallback_chip_readl,
+	.chip_readn	= serprog_chip_readn,
+	.chip_writeb	= serprog_chip_writeb,
+	.chip_writew	= fallback_chip_writew,
+	.chip_writel	= fallback_chip_writel,
+	.chip_writen	= fallback_chip_writen,
 };
 
 static enum chipbustype serprog_buses_supported = BUS_NONE;
@@ -572,7 +574,7 @@ static int serprog_init(void)
 	int have_device = 0;
 
 	/* the parameter is either of format "dev=/dev/device[:baud]" or "ip=ip:port" */
-	device = extract_programmer_param("dev");
+	device = extract_programmer_param_str("dev");
 	if (device && strlen(device)) {
 		char *baud_str = strstr(device, ":");
 		if (baud_str != NULL) {
@@ -609,7 +611,7 @@ static int serprog_init(void)
 	}
 	free(device);
 
-	device = extract_programmer_param("ip");
+	device = extract_programmer_param_str("ip");
 	if (have_device && device) {
 		msg_perr("Error: Both host and device specified.\n"
 			 "Please use either dev= or ip= but not both.\n");
@@ -737,7 +739,7 @@ static int serprog_init(void)
 			spi_master_serprog.max_data_read = v;
 			msg_pdbg(MSGHEADER "Maximum read-n length is %d\n", v);
 		}
-		spispeed = extract_programmer_param("spispeed");
+		spispeed = extract_programmer_param_str("spispeed");
 		if (spispeed && strlen(spispeed)) {
 			uint32_t f_spi_req, f_spi;
 			uint8_t buf[4];

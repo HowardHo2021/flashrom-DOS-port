@@ -121,6 +121,7 @@ static const struct spi_master spi_master_linux = {
 	.write_256	= linux_spi_write_256,
 	.write_aai	= default_spi_write_aai,
 	.shutdown	= linux_spi_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 /* Read max buffer size from sysfs, or use page size as fallback. */
@@ -176,7 +177,7 @@ static int linux_spi_init(void)
 	size_t max_kernel_buf_size;
 	struct linux_spi_data *spi_data;
 
-	p = extract_programmer_param("spispeed");
+	p = extract_programmer_param_str("spispeed");
 	if (p && strlen(p)) {
 		speed_hz = (uint32_t)strtoul(p, &endp, 10) * 1000;
 		if (p == endp || speed_hz == 0) {
@@ -191,7 +192,7 @@ static int linux_spi_init(void)
 	}
 	free(p);
 
-	dev = extract_programmer_param("dev");
+	dev = extract_programmer_param_str("dev");
 	if (!dev || !strlen(dev)) {
 		msg_perr("No SPI device given. Use flashrom -p "
 			 "linux_spi:dev=/dev/spidevX.Y\n");

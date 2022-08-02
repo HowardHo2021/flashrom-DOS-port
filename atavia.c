@@ -46,7 +46,7 @@
 /* Select the byte we want to access. This is done by clearing the bit corresponding to the byte we want to
  * access, leaving the others set (yes, really). */
 #define ENABLE_BYTE(address)	((~(1 << ((address) & 3))) & BROM_BYTE_ENABLE_MASK)
-#define BYTE_OFFSET(address)	(((addr) & 3) * 8)
+#define BYTE_OFFSET(address)	(((address) & 3) * 8)
 
 static const struct dev_entry ata_via[] = {
 	{PCI_VENDOR_ID_VIA, 0x3249, DEP, "VIA", "VT6421A"},
@@ -133,19 +133,19 @@ static uint8_t atavia_chip_readb(const struct flashctx *flash, const chipaddr ad
 }
 
 static const struct par_master lpc_master_atavia = {
-		.chip_readb		= atavia_chip_readb,
-		.chip_readw		= fallback_chip_readw,
-		.chip_readl		= fallback_chip_readl,
-		.chip_readn		= fallback_chip_readn,
-		.chip_writeb		= atavia_chip_writeb,
-		.chip_writew		= fallback_chip_writew,
-		.chip_writel		= fallback_chip_writel,
-		.chip_writen		= fallback_chip_writen,
+	.chip_readb	= atavia_chip_readb,
+	.chip_readw	= fallback_chip_readw,
+	.chip_readl	= fallback_chip_readl,
+	.chip_readn	= fallback_chip_readn,
+	.chip_writeb	= atavia_chip_writeb,
+	.chip_writew	= fallback_chip_writew,
+	.chip_writel	= fallback_chip_writel,
+	.chip_writen	= fallback_chip_writen,
 };
 
 static int atavia_init(void)
 {
-	char *arg = extract_programmer_param("offset");
+	char *arg = extract_programmer_param_str("offset");
 	if (arg) {
 		if (strlen(arg) == 0) {
 			msg_perr("Missing argument for offset.\n");

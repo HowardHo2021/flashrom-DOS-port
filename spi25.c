@@ -304,12 +304,17 @@ int probe_spi_at25f(struct flashctx *flash)
 
 static int spi_poll_wip(struct flashctx *const flash, const unsigned int poll_delay)
 {
-	/* FIXME: We can't tell if spi_read_status_register() failed. */
 	/* FIXME: We don't time out. */
-	while (spi_read_status_register(flash) & SPI_SR_WIP)
+	while (true) {
+		uint8_t status;
+		int ret = spi_read_register(flash, STATUS1, &status);
+		if (ret)
+			return ret;
+		if (!(status & SPI_SR_WIP))
+			return 0;
+
 		programmer_delay(poll_delay);
-	/* FIXME: Check the status register for errors. */
-	return 0;
+	}
 }
 
 /**
@@ -346,7 +351,16 @@ static int spi_simple_write_cmd(struct flashctx *const flash, const uint8_t op, 
 
 static int spi_write_extended_address_register(struct flashctx *const flash, const uint8_t regdata)
 {
-	const uint8_t op = flash->chip->wrea_override ? : JEDEC_WRITE_EXT_ADDR_REG;
+	uint8_t op;
+	if (flash->chip->feature_bits & FEATURE_4BA_EAR_C5C8) {
+		op = JEDEC_WRITE_EXT_ADDR_REG;
+	} else if (flash->chip->feature_bits & FEATURE_4BA_EAR_1716) {
+		op = ALT_WRITE_EXT_ADDR_REG_17;
+	} else {
+		msg_cerr("Flash misses feature flag for extended-address register.\n");
+		return -1;
+	}
+
 	struct spi_command cmds[] = {
 	{
 		.readarr = 0,
@@ -389,7 +403,7 @@ static int spi_prepare_address(struct flashctx *const flash, uint8_t cmd_buf[],
 		cmd_buf[4] = (addr >>  0) & 0xff;
 		return 4;
 	} else {
-		if (flash->chip->feature_bits & FEATURE_4BA_EXT_ADDR) {
+		if (flash->chip->feature_bits & FEATURE_4BA_EAR_ANY) {
 			if (spi_set_extended_address(flash, addr >> 24))
 				return -1;
 		} else if (addr >> 24) {
@@ -584,6 +598,13 @@ int spi_block_erase_21(struct flashctx *flash, unsigned int addr, unsigned int b
 }
 
 /* Erase 32 KB of flash with 4-bytes address from ANY mode (3-bytes or 4-bytes) */
+int spi_block_erase_53(struct flashctx *flash, unsigned int addr, unsigned int blocklen)
+{
+	/* This usually takes 100-4000ms, so wait in 100ms steps. */
+	return spi_write_cmd(flash, 0x53, true, addr, NULL, 0, 100 * 1000);
+}
+
+/* Erase 32 KB of flash with 4-bytes address from ANY mode (3-bytes or 4-bytes) */
 int spi_block_erase_5c(struct flashctx *flash, unsigned int addr, unsigned int blocklen)
 {
 	/* This usually takes 100-4000ms, so wait in 100ms steps. */
@@ -597,46 +618,49 @@ int spi_block_erase_dc(struct flashctx *flash, unsigned int addr, unsigned int b
 	return spi_write_cmd(flash, 0xdc, true, addr, NULL, 0, 100 * 1000);
 }
 
+static const struct {
+	erasefunc_t *func;
+	uint8_t opcode;
+} function_opcode_list[] = {
+	{&spi_block_erase_20, 0x20},
+	{&spi_block_erase_21, 0x21},
+	{&spi_block_erase_50, 0x50},
+	{&spi_block_erase_52, 0x52},
+	{&spi_block_erase_53, 0x53},
+	{&spi_block_erase_5c, 0x5c},
+	{&spi_block_erase_60, 0x60},
+	{&spi_block_erase_62, 0x62},
+	{&spi_block_erase_81, 0x81},
+	{&spi_block_erase_c4, 0xc4},
+	{&spi_block_erase_c7, 0xc7},
+	{&spi_block_erase_d7, 0xd7},
+	{&spi_block_erase_d8, 0xd8},
+	{&spi_block_erase_db, 0xdb},
+	{&spi_block_erase_dc, 0xdc},
+};
+
 erasefunc_t *spi_get_erasefn_from_opcode(uint8_t opcode)
 {
-	switch(opcode){
-	case 0xff:
-	case 0x00:
-		/* Not specified, assuming "not supported". */
-		return NULL;
-	case 0x20:
-		return &spi_block_erase_20;
-	case 0x21:
-		return &spi_block_erase_21;
-	case 0x50:
-		return &spi_block_erase_50;
-	case 0x52:
-		return &spi_block_erase_52;
-	case 0x5c:
-		return &spi_block_erase_5c;
-	case 0x60:
-		return &spi_block_erase_60;
-	case 0x62:
-		return &spi_block_erase_62;
-	case 0x81:
-		return &spi_block_erase_81;
-	case 0xc4:
-		return &spi_block_erase_c4;
-	case 0xc7:
-		return &spi_block_erase_c7;
-	case 0xd7:
-		return &spi_block_erase_d7;
-	case 0xd8:
-		return &spi_block_erase_d8;
-	case 0xdb:
-		return &spi_block_erase_db;
-	case 0xdc:
-		return &spi_block_erase_dc;
-	default:
-		msg_cinfo("%s: unknown erase opcode (0x%02x). Please report "
-			  "this at flashrom@flashrom.org\n", __func__, opcode);
-		return NULL;
+	size_t i;
+	for (i = 0; i < ARRAY_SIZE(function_opcode_list); i++) {
+		if (function_opcode_list[i].opcode == opcode)
+			return function_opcode_list[i].func;
 	}
+	msg_cinfo("%s: unknown erase opcode (0x%02x). Please report "
+			  "this at flashrom@flashrom.org\n", __func__, opcode);
+	return NULL;
+}
+
+uint8_t spi_get_opcode_from_erasefn(erasefunc_t *func)
+{
+	size_t i;
+	for (i = 0; i < ARRAY_SIZE(function_opcode_list); i++) {
+		if (function_opcode_list[i].func == func)
+			return function_opcode_list[i].opcode;
+	}
+	msg_cinfo("%s: unknown erase function (0x%p). Please report "
+			"this at flashrom@flashrom.org\n", __func__, func);
+	return 0x00; //Assuming 0x00 is not a erase function opcode
 }
 
 static int spi_nbyte_program(struct flashctx *flash, unsigned int addr, const uint8_t *bytes, unsigned int len)
@@ -669,11 +693,14 @@ int spi_read_chunked(struct flashctx *flash, uint8_t *buf, unsigned int start,
 {
 	int ret;
 	size_t to_read;
+	size_t start_address = start;
+	size_t end_address = len - start;
 	for (; len; len -= to_read, buf += to_read, start += to_read) {
 		to_read = min(chunksize, len);
 		ret = spi_nbyte_read(flash, start, buf, to_read);
 		if (ret)
 			return ret;
+		update_progress(flash, FLASHROM_PROGRESS_READ, start - start_address + to_read, end_address);
 	}
 	return 0;
 }
@@ -693,6 +720,8 @@ int spi_write_chunked(struct flashctx *flash, const uint8_t *buf, unsigned int s
 	 * we're OK for now.
 	 */
 	unsigned int page_size = flash->chip->page_size;
+	size_t start_address = start;
+	size_t end_address = len - start;
 
 	/* Warning: This loop has a very unusual condition and body.
 	 * The loop needs to go through each page with at least one affected
@@ -717,6 +746,7 @@ int spi_write_chunked(struct flashctx *flash, const uint8_t *buf, unsigned int s
 			if (rc)
 				return rc;
 		}
+		update_progress(flash, FLASHROM_PROGRESS_WRITE, start - start_address + lenhere, end_address);
 	}
 
 	return 0;
@@ -736,6 +766,7 @@ int spi_chip_write_1(struct flashctx *flash, const uint8_t *buf, unsigned int st
 	for (i = start; i < start + len; i++) {
 		if (spi_nbyte_program(flash, i, buf + i - start, 1))
 			return 1;
+		update_progress(flash, FLASHROM_PROGRESS_WRITE, i - start, len - start);
 	}
 	return 0;
 }

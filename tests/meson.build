@@ -11,8 +11,6 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-root_includes = include_directories('../subprojects')
-
 srcs = [
   'io_mock.c',
   'tests.c',
@@ -20,9 +18,17 @@ srcs = [
   'helpers.c',
   'flashrom.c',
   'spi25.c',
-  'init_shutdown.c',
+  'lifecycle.c',
+  'dummyflasher.c',
+  'nicrealtek.c',
+  'raiden_debug_spi.c',
+  'dediprog.c',
+  'linux_mtd.c',
+  'linux_spi.c',
+  'realtek_mst_i2c_spi.c',
   'layout.c',
   'chip.c',
+  'chip_wp.c',
 ]
 
 mocks = [
@@ -36,6 +42,7 @@ mocks = [
   '-Wl,--wrap=sio_read',
   '-Wl,--wrap=open',
   '-Wl,--wrap=open64',
+  '-Wl,--wrap=__open64_2',
   '-Wl,--wrap=ioctl',
   '-Wl,--wrap=read',
   '-Wl,--wrap=write',
@@ -56,18 +63,21 @@ mocks = [
   '-Wl,--wrap=fsync',
   '-Wl,--wrap=fread',
   '-Wl,--wrap=fgets',
+  '-Wl,--wrap=__fgets_chk',
+  '-Wl,--wrap=fprintf',
+  '-Wl,--wrap=__vfprintf_chk',
   '-Wl,--wrap=fclose',
   '-Wl,--wrap=feof',
   '-Wl,--wrap=ferror',
   '-Wl,--wrap=clearerr',
   '-Wl,--wrap=setvbuf',
   '-Wl,--wrap=rget_io_perms',
-  '-Wl,--wrap=test_outb',
-  '-Wl,--wrap=test_inb',
-  '-Wl,--wrap=test_outw',
-  '-Wl,--wrap=test_inw',
-  '-Wl,--wrap=test_outl',
-  '-Wl,--wrap=test_inl',
+  '-Wl,--wrap=OUTB',
+  '-Wl,--wrap=INB',
+  '-Wl,--wrap=OUTW',
+  '-Wl,--wrap=INW',
+  '-Wl,--wrap=OUTL',
+  '-Wl,--wrap=INL',
   '-Wl,--wrap=usb_dev_get_by_vid_pid_number',
   '-Wl,--wrap=libusb_init',
   '-Wl,--wrap=libusb_open',
@@ -93,12 +103,10 @@ mocks = [
 
 flashrom_tests = executable('flashrom_unit_tests',
   srcs,
-  include_directories : root_includes,
   c_args : [
     cargs,
     '-ffunction-sections',
     '-fdata-sections',
-    #    '-DSTANDALONE',
   ],
   export_dynamic : true,
   link_args : mocks,

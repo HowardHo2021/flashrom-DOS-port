@@ -228,11 +228,11 @@ static int rayer_shutdown(void *spi_data)
 }
 
 static const struct bitbang_spi_master bitbang_spi_master_rayer = {
-	.set_cs = rayer_bitbang_set_cs,
-	.set_sck = rayer_bitbang_set_sck,
-	.set_mosi = rayer_bitbang_set_mosi,
-	.get_miso = rayer_bitbang_get_miso,
-	.half_period = 0,
+	.set_cs		= rayer_bitbang_set_cs,
+	.set_sck	= rayer_bitbang_set_sck,
+	.set_mosi	= rayer_bitbang_set_mosi,
+	.get_miso	= rayer_bitbang_get_miso,
+	.half_period	= 0,
 };
 
 static int rayer_spi_init(void)
@@ -244,7 +244,7 @@ static int rayer_spi_init(void)
 	uint8_t lpt_outbyte;
 
 	/* Non-default port requested? */
-	arg = extract_programmer_param("iobase");
+	arg = extract_programmer_param_str("iobase");
 	if (arg) {
 		char *endptr = NULL;
 		unsigned long tmp;
@@ -277,7 +277,7 @@ static int rayer_spi_init(void)
 	msg_pdbg("Using address 0x%x as I/O base for parallel port access.\n",
 		 lpt_iobase);
 
-	arg = extract_programmer_param("type");
+	arg = extract_programmer_param_str("type");
 	if (arg) {
 		for (; prog->type != NULL; prog++) {
 			if (strcasecmp(arg, prog->type) == 0) {

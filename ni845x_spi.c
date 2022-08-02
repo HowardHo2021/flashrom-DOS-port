@@ -146,7 +146,7 @@ static int32 ni845x_spi_open_resource(char *resource_handle, uInt32 *opened_hand
 
 /**
  * @param serial a null terminated string containing the serial number of the specific device or NULL
- * @return the 0 on successful completition, negative error code on failure
+ * @return the 0 on successful completion, negative error code on failure
  */
 static int ni845x_spi_open(const char *serial, uInt32 *return_handle)
 {
@@ -161,7 +161,7 @@ static int ni845x_spi_open(const char *serial, uInt32 *return_handle)
 
 	tmp = ni845xFindDevice(resource_name, &device_find_handle, &found_devices_count);
 	if (tmp != 0) {
-		// supress warning if no device found
+		// suppress warning if no device found
 		if (tmp != NI845x_FIND_DEVICE_NO_DEVICE_FOUND)
 			ni845x_report_error("ni845xFindDevice", tmp);
 		return -1;
@@ -214,7 +214,7 @@ _close_ret:
  * @param requested_io_voltage_mV the desired IO voltage in mVolts
  * @param set_io_voltage_mV the IO voltage which was set in mVolts
  * @param coerce_mode if set to USE_LOWER the closest supported IO voltage which is lower or equal to
- * the requested_io_voltage_mV will be selected. Otherwise the next closest supported voltage will be choosen
+ * the requested_io_voltage_mV will be selected. Otherwise the next closest supported voltage will be chosen
  * which is higher or equal to the requested_io_voltage_mV.
  * @return 0 on success, negative on error, positive on warning
  */
@@ -340,7 +340,7 @@ static void ni845x_spi_print_available_devices(void)
 
 	tmp = ni845xFindDevice(resource_handle, &device_find_handle, &found_devices_count);
 	if (tmp != 0) {
-		// supress warning if no device found
+		// suppress warning if no device found
 		if (tmp != NI845x_FIND_DEVICE_NO_DEVICE_FOUND)
 			ni845x_report_error("ni845xFindDevice", tmp);
 		return;
@@ -517,7 +517,7 @@ static int ni845x_spi_transmit(const struct flashctx *flash,
 
 	if (read_cnt != 0 && read_arr != NULL) {
 		if ((read_cnt + write_cnt) != read_size) {
-			msg_perr("%s: expected and returned read count mismatch: %u expected, %ld recieved\n",
+			msg_perr("%s: expected and returned read count mismatch: %u expected, %ld received\n",
 					 __func__, read_cnt, read_size);
 			free(transfer_buffer);
 			return -1;
@@ -529,14 +529,15 @@ static int ni845x_spi_transmit(const struct flashctx *flash,
 }
 
 static const struct spi_master spi_programmer_ni845x = {
-	.max_data_read = MAX_DATA_READ_UNLIMITED,
-	.max_data_write = MAX_DATA_WRITE_UNLIMITED,
-	.command = ni845x_spi_transmit,
-	.multicommand = default_spi_send_multicommand,
-	.read = default_spi_read,
-	.write_256 = default_spi_write_256,
-	.write_aai = default_spi_write_aai,
-	.shutdown = ni845x_spi_shutdown,
+	.max_data_read	= MAX_DATA_READ_UNLIMITED,
+	.max_data_write	= MAX_DATA_WRITE_UNLIMITED,
+	.command	= ni845x_spi_transmit,
+	.multicommand	= default_spi_send_multicommand,
+	.read		= default_spi_read,
+	.write_256	= default_spi_write_256,
+	.write_aai	= default_spi_write_aai,
+	.shutdown	= ni845x_spi_shutdown,
+	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static int ni845x_spi_init(void)
@@ -552,7 +553,7 @@ static int ni845x_spi_init(void)
 	int32 tmp = 0;
 
 	// read the cs parameter (which Chip select should we use)
-	CS_str = extract_programmer_param("cs");
+	CS_str = extract_programmer_param_str("cs");
 	if (CS_str) {
 		CS_number = CS_str[0] - '0';
 		free(CS_str);
@@ -562,7 +563,7 @@ static int ni845x_spi_init(void)
 		}
 	}
 
-	voltage = extract_programmer_param("voltage");
+	voltage = extract_programmer_param_str("voltage");
 	if (voltage != NULL) {
 		requested_io_voltage_mV = parse_voltage(voltage);
 		free(voltage);
@@ -570,9 +571,9 @@ static int ni845x_spi_init(void)
 			return 1;
 	}
 
-	serial_number = extract_programmer_param("serial");
+	serial_number = extract_programmer_param_str("serial");
 
-	speed_str = extract_programmer_param("spispeed");
+	speed_str = extract_programmer_param_str("spispeed");
 	if (speed_str) {
 		spi_speed_KHz = strtoul(speed_str, &endptr, 0);
 		if (*endptr) {
@@ -585,7 +586,7 @@ static int ni845x_spi_init(void)
 	}
 
 	ignore_io_voltage_limits = false;
-	ignore_io_voltage_limits_str = extract_programmer_param("ignore_io_voltage_limits");
+	ignore_io_voltage_limits_str = extract_programmer_param_str("ignore_io_voltage_limits");
 	if (ignore_io_voltage_limits_str
 		&& strcmp(ignore_io_voltage_limits_str, "yes") == 0) {
 		ignore_io_voltage_limits = true;
