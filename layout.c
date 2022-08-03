@@ -400,7 +400,7 @@ int flashrom_layout_include_region(struct flashrom_layout *const layout, const c
 }
 
 int flashrom_layout_get_region_range(struct flashrom_layout *const l, const char *name,
-			      unsigned int *start, unsigned int *len)
+			      long unsigned int *start, long unsigned int *len)
 {
 	const struct romentry *const entry = _layout_entry_by_name(l, name);
 	if (entry) {

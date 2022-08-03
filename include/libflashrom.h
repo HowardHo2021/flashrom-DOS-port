@@ -429,7 +429,7 @@ int flashrom_layout_include_region(struct flashrom_layout *layout, const char *n
  *         1 if the given name can't be found.
  */
 int flashrom_layout_get_region_range(struct flashrom_layout *layout, const char *name,
-		     unsigned int *start, unsigned int *len);
+		     long unsigned int *start, long unsigned int *len);
 /**
  * @brief Free a layout.
  *
