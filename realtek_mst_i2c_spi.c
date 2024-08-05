@@ -436,68 +436,66 @@ static const struct spi_master spi_master_i2c_realtek_mst = {
 	.max_data_read	= 16,
 	.max_data_write	= 8,
 	.command	= realtek_mst_i2c_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
 	.read		= realtek_mst_i2c_spi_read,
 	.write_256	= realtek_mst_i2c_spi_write_256,
 	.write_aai	= realtek_mst_i2c_spi_write_aai,
 	.shutdown	= realtek_mst_i2c_spi_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
-static int get_params(bool *reset, bool *enter_isp, bool *allow_brick)
+static int get_params(const struct programmer_cfg *cfg, bool *reset, bool *enter_isp, bool *allow_brick)
 {
-	char *reset_str = NULL, *isp_str = NULL, *brick_str = NULL;
+	char *param_str;
 	int ret = 0;
 
 	*allow_brick = false; /* Default behaviour is to bail. */
-	brick_str = extract_programmer_param_str("allow_brick");
-	if (brick_str) {
-		if (!strcmp(brick_str, "yes")) {
+	param_str = extract_programmer_param_str(cfg, "allow_brick");
+	if (param_str) {
+		if (!strcmp(param_str, "yes")) {
 			*allow_brick = true;
 		} else {
 			msg_perr("%s: Incorrect param format, allow_brick=yes.\n", __func__);
 			ret = SPI_GENERIC_ERROR;
 		}
 	}
-	free(brick_str);
+	free(param_str);
 
 	*reset = false; /* Default behaviour is no MCU reset on tear-down. */
-	reset_str = extract_programmer_param_str("reset_mcu");
-	if (reset_str) {
-		if (reset_str[0] == '1') {
+	param_str = extract_programmer_param_str(cfg, "reset_mcu");
+	if (param_str) {
+		if (param_str[0] == '1') {
 			*reset = true;
-		} else if (reset_str[0] == '0') {
+		} else if (param_str[0] == '0') {
 			*reset = false;
 		} else {
 			msg_perr("%s: Incorrect param format, reset_mcu=1 or 0.\n", __func__);
 			ret = SPI_GENERIC_ERROR;
 		}
 	}
-	free(reset_str);
+	free(param_str);
 
 	*enter_isp = true; /* Default behaviour is enter ISP on setup. */
-	isp_str = extract_programmer_param_str("enter_isp");
-	if (isp_str) {
-		if (isp_str[0] == '1') {
+	param_str = extract_programmer_param_str(cfg, "enter_isp");
+	if (param_str) {
+		if (param_str[0] == '1') {
 			*enter_isp = true;
-		} else if (isp_str[0] == '0') {
+		} else if (param_str[0] == '0') {
 			*enter_isp = false;
 		} else {
 			msg_perr("%s: Incorrect param format, enter_isp=1 or 0.\n", __func__);
 			ret = SPI_GENERIC_ERROR;
 		}
 	}
-	free(isp_str);
+	free(param_str);
 
 	return ret;
 }
 
-static int realtek_mst_i2c_spi_init(void)
+static int realtek_mst_i2c_spi_init(const struct programmer_cfg *cfg)
 {
 	int ret = 0;
-	bool reset = false, enter_isp = false, allow_brick = false;
+	bool reset, enter_isp, allow_brick;
 
-	if (get_params(&reset, &enter_isp, &allow_brick))
+	if (get_params(cfg, &reset, &enter_isp, &allow_brick))
 		return SPI_GENERIC_ERROR;
 
 	/*
@@ -512,7 +510,7 @@ static int realtek_mst_i2c_spi_init(void)
 		return SPI_GENERIC_ERROR;
 	}
 
-	int fd = i2c_open_from_programmer_params(REGISTER_ADDRESS, 0);
+	int fd = i2c_open_from_programmer_params(cfg, REGISTER_ADDRESS, 0);
 	if (fd < 0)
 		return fd;
 
@@ -544,7 +542,4 @@ const struct programmer_entry programmer_realtek_mst_i2c_spi = {
 	.type			= OTHER,
 	.devs.note		= "Device files /dev/i2c-*.\n",
 	.init			= realtek_mst_i2c_spi_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

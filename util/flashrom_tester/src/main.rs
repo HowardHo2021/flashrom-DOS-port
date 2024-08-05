@@ -39,9 +39,8 @@ extern crate log;
 mod logger;
 
 use clap::{App, Arg};
-use flashrom::{FlashChip, Flashrom, FlashromCmd};
+use flashrom::{FlashChip, Flashrom, FlashromCmd, FlashromLib};
 use flashrom_tester::{tester, tests};
-use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 pub mod built_info {
@@ -65,24 +64,31 @@ fn main() {
             built_info::BUILT_TIME_UTC,
             built_info::RUSTC_VERSION,
         ))
-        .arg(Arg::with_name("flashrom_binary").required(true))
+        .arg(
+            Arg::with_name("libflashrom")
+                .long("libflashrom")
+                .takes_value(false)
+                .help("Test the flashrom library instead of a binary"),
+        )
+        .arg(
+            Arg::with_name("flashrom_binary")
+                .long("flashrom_binary")
+                .short("b")
+                .takes_value(true)
+                .required_unless("libflashrom")
+                .conflicts_with("libflashrom")
+                .help("Path to flashrom binary to test"),
+        )
         .arg(
             Arg::with_name("ccd_target_type")
                 .required(true)
-                .possible_values(&["host", "ec", "servo"]),
+                .possible_values(&["internal"]),
         )
         .arg(
             Arg::with_name("print-layout")
                 .short("l")
                 .long("print-layout")
                 .help("Print the layout file's contents before running tests"),
-        )
-        .arg(
-            Arg::with_name("log-file")
-                .short("o")
-                .long("log-file")
-                .takes_value(true)
-                .help("Write logs to a file rather than stdout"),
         )
         .arg(
             Arg::with_name("log_debug")
@@ -107,15 +113,13 @@ fn main() {
         )
         .get_matches();
 
-    logger::init(
-        matches.value_of_os("log-file").map(PathBuf::from),
-        matches.is_present("log_debug"),
-    );
+    logger::init(matches.is_present("log_debug"));
     debug!("Args parsed and logging initialized OK");
 
-    let flashrom_path = matches
-        .value_of("flashrom_binary")
-        .expect("flashrom_binary should be required");
+    debug!("Collecting crossystem info");
+    let crossystem =
+        flashrom_tester::utils::collect_crosssystem(&[]).expect("could not run crossystem");
+
     let ccd_type = FlashChip::from(
         matches
             .value_of("ccd_target_type")
@@ -123,10 +127,24 @@ fn main() {
     )
     .expect("ccd_target_type should admit only known types");
 
-    let cmd: Box<dyn Flashrom> = Box::new(FlashromCmd {
-        path: flashrom_path.to_string(),
-        fc: ccd_type,
-    });
+    let cmd: Box<dyn Flashrom> = if matches.is_present("libflashrom") {
+        Box::new(FlashromLib::new(
+            ccd_type,
+            if matches.is_present("log_debug") {
+                flashrom::FLASHROM_MSG_DEBUG
+            } else {
+                flashrom::FLASHROM_MSG_WARN
+            },
+        ))
+    } else {
+        Box::new(FlashromCmd {
+            path: matches
+                .value_of("flashrom_binary")
+                .expect("flashrom_binary is required")
+                .to_string(),
+            fc: ccd_type,
+        })
+    };
 
     let print_layout = matches.is_present("print-layout");
     let output_format = matches
@@ -143,6 +161,7 @@ fn main() {
         output_format,
         test_names,
         Some(handle_sigint()),
+        crossystem,
     ) {
         eprintln!("Failed to run tests: {:?}", e);
         std::process::exit(1);

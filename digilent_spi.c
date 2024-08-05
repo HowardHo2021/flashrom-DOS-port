@@ -333,12 +333,9 @@ static const struct spi_master spi_master_digilent_spi = {
 	.max_data_read	= 252,
 	.max_data_write	= 252,
 	.command	= digilent_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
 	.shutdown	= digilent_spi_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static bool default_reset(struct libusb_device_handle *handle)
@@ -374,9 +371,9 @@ static const struct digilent_spispeeds spispeeds[] = {
 	{ NULL,		0 },
 };
 
-static int digilent_spi_init(void)
+static int digilent_spi_init(const struct programmer_cfg *cfg)
 {
-	char *p;
+	char *param_str;
 	uint32_t speed_hz = spispeeds[0].speed;
 	int i;
 	struct libusb_device_handle *handle = NULL;
@@ -408,28 +405,28 @@ static int digilent_spi_init(void)
 		goto close_handle;
 	}
 
-	p = extract_programmer_param_str("spispeed");
-	if (p) {
+	param_str = extract_programmer_param_str(cfg, "spispeed");
+	if (param_str) {
 		for (i = 0; spispeeds[i].name; ++i) {
-			if (!strcasecmp(spispeeds[i].name, p)) {
+			if (!strcasecmp(spispeeds[i].name, param_str)) {
 				speed_hz = spispeeds[i].speed;
 				break;
 			}
 		}
 		if (!spispeeds[i].name) {
-			msg_perr("Error: Invalid spispeed value: '%s'.\n", p);
-			free(p);
+			msg_perr("Error: Invalid spispeed value: '%s'.\n", param_str);
+			free(param_str);
 			goto close_handle;
 		}
-		free(p);
+		free(param_str);
 	}
 
-	p = extract_programmer_param_str("reset");
-	if (p && strlen(p))
-		reset_board = (p[0] == '1');
+	param_str = extract_programmer_param_str(cfg, "reset");
+	if (param_str && strlen(param_str))
+		reset_board = (param_str[0] == '1');
 	else
 		reset_board = default_reset(handle);
-	free(p);
+	free(param_str);
 
 
 	if (reset_board) {
@@ -468,7 +465,4 @@ const struct programmer_entry programmer_digilent_spi = {
 	.type			= USB,
 	.devs.dev		= devs_digilent_spi,
 	.init			= digilent_spi_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

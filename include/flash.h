@@ -55,9 +55,13 @@ typedef uintptr_t chipaddr;
 #define PRIxPTR_WIDTH ((int)(sizeof(uintptr_t)*2))
 
 int register_shutdown(int (*function) (void *data), void *data);
-void *programmer_map_flash_region(const char *descr, uintptr_t phys_addr, size_t len);
-void programmer_unmap_flash_region(void *virt_addr, size_t len);
-void programmer_delay(unsigned int usecs);
+struct registered_master;
+void *master_map_flash_region(const struct registered_master *mast,
+			      const char *descr, uintptr_t phys_addr, size_t len);
+void master_unmap_flash_region(const struct registered_master *mast,
+			       void *virt_addr, size_t len);
+/* NOTE: flashctx is not used in default_delay. In this case, a context should be NULL. */
+void programmer_delay(const struct flashrom_flashctx *flash, unsigned int usecs);
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -79,17 +83,17 @@ enum chipbustype {
  */
 enum write_granularity {
 	/* We assume 256 byte granularity by default. */
-	write_gran_256bytes = 0,/* If less than 256 bytes are written, the unwritten bytes are undefined. */
-	write_gran_1bit,	/* Each bit can be cleared individually. */
-	write_gran_1byte,	/* A byte can be written once. Further writes to an already written byte cause
+	WRITE_GRAN_256BYTES = 0,/* If less than 256 bytes are written, the unwritten bytes are undefined. */
+	WRITE_GRAN_1BIT,	/* Each bit can be cleared individually. */
+	WRITE_GRAN_1BYTE,	/* A byte can be written once. Further writes to an already written byte cause
 				 * its contents to be either undefined or to stay unchanged. */
-	write_gran_128bytes,	/* If less than 128 bytes are written, the unwritten bytes are undefined. */
-	write_gran_264bytes,	/* If less than 264 bytes are written, the unwritten bytes are undefined. */
-	write_gran_512bytes,	/* If less than 512 bytes are written, the unwritten bytes are undefined. */
-	write_gran_528bytes,	/* If less than 528 bytes are written, the unwritten bytes are undefined. */
-	write_gran_1024bytes,	/* If less than 1024 bytes are written, the unwritten bytes are undefined. */
-	write_gran_1056bytes,	/* If less than 1056 bytes are written, the unwritten bytes are undefined. */
-	write_gran_1byte_implicit_erase, /* EEPROMs and other chips with implicit erase and 1-byte writes. */
+	WRITE_GRAN_128BYTES,	/* If less than 128 bytes are written, the unwritten bytes are undefined. */
+	WRITE_GRAN_264BYTES,	/* If less than 264 bytes are written, the unwritten bytes are undefined. */
+	WRITE_GRAN_512BYTES,	/* If less than 512 bytes are written, the unwritten bytes are undefined. */
+	WRITE_GRAN_528BYTES,	/* If less than 528 bytes are written, the unwritten bytes are undefined. */
+	WRITE_GRAN_1024BYTES,	/* If less than 1024 bytes are written, the unwritten bytes are undefined. */
+	WRITE_GRAN_1056BYTES,	/* If less than 1056 bytes are written, the unwritten bytes are undefined. */
+	WRITE_GRAN_1BYTE_IMPLICIT_ERASE, /* EEPROMs and other chips with implicit erase and 1-byte writes. */
 };
 
 /*
@@ -151,7 +155,17 @@ enum write_granularity {
 #define FEATURE_WRSR_EXT3	((1 << 22) | FEATURE_WRSR_EXT2)
 #define FEATURE_WRSR3		(1 << 23)
 
+/*
+ * Whether chip has security register (RDSCUR/WRSCUR commands).
+ * Not to be confused with "secure registers" of OTP.
+ */
+#define FEATURE_SCUR		(1 << 24)
+
+/* Whether chip has configuration register (RDCR/WRSR_EXT2 commands) */
+#define FEATURE_CFGR	    (1 << 25)
+
 #define ERASED_VALUE(flash)	(((flash)->chip->feature_bits & FEATURE_ERASED_ZERO) ? 0x00 : 0xff)
+#define UNERASED_VALUE(flash)	(((flash)->chip->feature_bits & FEATURE_ERASED_ZERO) ? 0xff : 0x00)
 
 enum test_state {
 	OK = 0,
@@ -161,17 +175,19 @@ enum test_state {
 	NA,	/* Not applicable (e.g. write support on ROM chips) */
 };
 
-#define TEST_UNTESTED	(struct tested){ .probe = NT, .read = NT, .erase = NT, .write = NT }
+#define TEST_UNTESTED	(struct tested){ .probe = NT, .read = NT, .erase = NT, .write = NT, .wp = NT }
 
-#define TEST_OK_PROBE	(struct tested){ .probe = OK, .read = NT, .erase = NT, .write = NT }
-#define TEST_OK_PR	(struct tested){ .probe = OK, .read = OK, .erase = NT, .write = NT }
-#define TEST_OK_PRE	(struct tested){ .probe = OK, .read = OK, .erase = OK, .write = NT }
-#define TEST_OK_PREW	(struct tested){ .probe = OK, .read = OK, .erase = OK, .write = OK }
+#define TEST_OK_PROBE	(struct tested){ .probe = OK, .read = NT, .erase = NT, .write = NT, .wp = NT }
+#define TEST_OK_PR	(struct tested){ .probe = OK, .read = OK, .erase = NT, .write = NT, .wp = NT }
+#define TEST_OK_PRE	(struct tested){ .probe = OK, .read = OK, .erase = OK, .write = NT, .wp = NT }
+#define TEST_OK_PREW	(struct tested){ .probe = OK, .read = OK, .erase = OK, .write = OK, .wp = NT }
+#define TEST_OK_PREWB	(struct tested){ .probe = OK, .read = OK, .erase = OK, .write = OK, .wp = OK }
 
-#define TEST_BAD_PROBE	(struct tested){ .probe = BAD, .read = NT, .erase = NT, .write = NT }
-#define TEST_BAD_PR	(struct tested){ .probe = BAD, .read = BAD, .erase = NT, .write = NT }
-#define TEST_BAD_PRE	(struct tested){ .probe = BAD, .read = BAD, .erase = BAD, .write = NT }
-#define TEST_BAD_PREW	(struct tested){ .probe = BAD, .read = BAD, .erase = BAD, .write = BAD }
+#define TEST_BAD_PROBE	(struct tested){ .probe = BAD, .read = NT, .erase = NT, .write = NT, .wp = NT }
+#define TEST_BAD_PR	(struct tested){ .probe = BAD, .read = BAD, .erase = NT, .write = NT, .wp = NT }
+#define TEST_BAD_PRE	(struct tested){ .probe = BAD, .read = BAD, .erase = BAD, .write = NT, .wp = NT }
+#define TEST_BAD_PREW	(struct tested){ .probe = BAD, .read = BAD, .erase = BAD, .write = BAD, .wp = NT }
+#define TEST_BAD_PREWB	(struct tested){ .probe = BAD, .read = BAD, .erase = BAD, .write = BAD, .wp = BAD }
 
 struct flashrom_flashctx;
 #define flashctx flashrom_flashctx /* TODO: Agree on a name and convert all occurrences. */
@@ -182,6 +198,8 @@ enum flash_reg {
 	STATUS1,
 	STATUS2,
 	STATUS3,
+	SECURITY,
+	CONFIG,
 	MAX_REGISTERS
 };
 
@@ -204,6 +222,205 @@ struct reg_bit_info {
 };
 
 struct wp_bits;
+
+enum decode_range_func {
+	NO_DECODE_RANGE_FUNC = 0, /* 0 indicates no range decode function is set. */
+	DECODE_RANGE_SPI25 = 1,
+	DECODE_RANGE_SPI25_64K_BLOCK = 2,
+	DECODE_RANGE_SPI25_BIT_CMP = 3,
+	DECODE_RANGE_SPI25_2X_BLOCK = 4,
+};
+typedef void (decode_range_func_t)(size_t *start, size_t *len, const struct wp_bits *, size_t chip_len);
+
+enum probe_func {
+	NO_PROBE_FUNC = 0, /* 0 indicates no probe function set. */
+	PROBE_JEDEC = 1,
+	PROBE_JEDEC_29GL,
+	PROBE_OPAQUE,
+	PROBE_EDI_KB9012,
+	PROBE_AT82802AB,
+	PROBE_W29EE011,
+	PROBE_EN29LV640B,
+	PROBE_SPI_AT25F,
+	PROBE_SPI_AT45DB,
+	PROBE_SPI_BIG_SPANSION,
+	PROBE_SPI_RDID,
+	PROBE_SPI_RDID4,
+	PROBE_SPI_REMS,
+	PROBE_SPI_RES1,
+	PROBE_SPI_RES2,
+	PROBE_SPI_SFDP,
+	PROBE_SPI_ST95,
+};
+
+enum write_func {
+	NO_WRITE_FUNC = 0, /* 0 indicates no write function set. */
+	WRITE_JEDEC = 1,
+	WRITE_JEDEC1,
+	WRITE_OPAQUE,
+	SPI_CHIP_WRITE1,
+	SPI_CHIP_WRITE256,
+	SPI_WRITE_AAI,
+	SPI_WRITE_AT45DB,
+	WRITE_28SF040,
+	WRITE_82802AB,
+	WRITE_EN29LV640B,
+	EDI_CHIP_WRITE,
+#ifdef FLASHROM_TEST
+	TEST_WRITE_INJECTOR, /* special case must come last. */
+#endif
+};
+typedef int (write_func_t)(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
+
+#ifdef FLASHROM_TEST
+extern write_func_t *g_test_write_injector;
+#endif
+
+enum read_func {
+	NO_READ_FUNC = 0, /* 0 indicates no read function set. */
+	SPI_CHIP_READ = 1,
+	READ_OPAQUE,
+	READ_MEMMAPPED,
+	EDI_CHIP_READ,
+	SPI_READ_AT45DB,
+	SPI_READ_AT45DB_E8,
+#ifdef FLASHROM_TEST
+	TEST_READ_INJECTOR, /* special case must come last. */
+#endif
+};
+typedef int (read_func_t)(struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
+int read_flash(struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
+
+#ifdef FLASHROM_TEST
+extern read_func_t *g_test_read_injector;
+#endif
+
+enum block_erase_func {
+	NO_BLOCK_ERASE_FUNC = 0, /* 0 indicates no block erase function set. */
+	SPI_BLOCK_ERASE_EMULATION = 1,
+	SPI_BLOCK_ERASE_20,
+	SPI_BLOCK_ERASE_21,
+	SPI_BLOCK_ERASE_40,
+	SPI_BLOCK_ERASE_50,
+	SPI_BLOCK_ERASE_52,
+	SPI_BLOCK_ERASE_53,
+	SPI_BLOCK_ERASE_5C,
+	SPI_BLOCK_ERASE_60,
+	SPI_BLOCK_ERASE_62,
+	SPI_BLOCK_ERASE_81,
+	SPI_BLOCK_ERASE_C4,
+	SPI_BLOCK_ERASE_C7,
+	SPI_BLOCK_ERASE_D7,
+	SPI_BLOCK_ERASE_D8,
+	SPI_BLOCK_ERASE_DB,
+	SPI_BLOCK_ERASE_DC,
+	S25FL_BLOCK_ERASE,
+	S25FS_BLOCK_ERASE_D8,
+	JEDEC_SECTOR_ERASE,
+	JEDEC_BLOCK_ERASE,
+	JEDEC_CHIP_BLOCK_ERASE,
+	OPAQUE_ERASE,
+	SPI_ERASE_AT45CS_SECTOR,
+	SPI_ERASE_AT45DB_BLOCK,
+	SPI_ERASE_AT45DB_CHIP,
+	SPI_ERASE_AT45DB_PAGE,
+	SPI_ERASE_AT45DB_SECTOR,
+	ERASE_CHIP_28SF040,
+	ERASE_SECTOR_28SF040,
+	ERASE_BLOCK_82802AB,
+	ERASE_SECTOR_49LFXXXC,
+	STM50_SECTOR_ERASE,
+	EDI_CHIP_BLOCK_ERASE,
+#ifdef FLASHROM_TEST
+	/* special cases must come last. */
+	TEST_ERASE_INJECTOR_1,
+	TEST_ERASE_INJECTOR_2,
+	TEST_ERASE_INJECTOR_3,
+	TEST_ERASE_INJECTOR_4,
+	TEST_ERASE_INJECTOR_5,
+#endif
+};
+
+#ifdef FLASHROM_TEST
+#define NUM_TEST_ERASE_INJECTORS 5
+extern erasefunc_t *g_test_erase_injector[NUM_TEST_ERASE_INJECTORS];
+#endif
+
+enum blockprotect_func {
+	NO_BLOCKPROTECT_FUNC = 0, /* 0 indicates no unlock function set. */
+	SPI_DISABLE_BLOCKPROTECT,
+	SPI_DISABLE_BLOCKPROTECT_BP2_EP_SRWD,
+	SPI_DISABLE_BLOCKPROTECT_BP1_SRWD,
+	SPI_DISABLE_BLOCKPROTECT_BP2_SRWD,
+	SPI_DISABLE_BLOCKPROTECT_BP3_SRWD,
+	SPI_DISABLE_BLOCKPROTECT_BP4_SRWD,
+	SPI_DISABLE_BLOCKPROTECT_AT45DB,
+	SPI_DISABLE_BLOCKPROTECT_AT25F,
+	SPI_DISABLE_BLOCKPROTECT_AT25FS010,
+	SPI_DISABLE_BLOCKPROTECT_AT25FS040,
+	SPI_DISABLE_BLOCKPROTECT_AT25F512A,
+	SPI_DISABLE_BLOCKPROTECT_AT25F512B,
+	SPI_DISABLE_BLOCKPROTECT_AT2X_GLOBAL_UNPROTECT,
+	SPI_DISABLE_BLOCKPROTECT_AT2X_GLOBAL_UNPROTECT_SEC,
+	SPI_DISABLE_BLOCKPROTECT_SST26_GLOBAL_UNPROTECT,
+	SPI_DISABLE_BLOCKPROTECT_N25Q,
+	UNLOCK_REGSPACE2_BLOCK_ERASER_0,
+	UNLOCK_REGSPACE2_BLOCK_ERASER_1,
+	UNLOCK_REGSPACE2_UNIFORM_32K,
+	UNLOCK_REGSPACE2_UNIFORM_64K,
+	UNLOCK_28F004S5,
+	UNLOCK_LH28F008BJT,
+	UNLOCK_SST_FWHUB,
+	UNPROTECT_28SF040,
+};
+
+enum printlock_func {
+	NO_PRINTLOCK_FUNC,
+	PRINTLOCK_AT49F,
+	PRINTLOCK_REGSPACE2_BLOCK_ERASER_0,
+	PRINTLOCK_REGSPACE2_BLOCK_ERASER_1,
+	PRINTLOCK_SST_FWHUB,
+	PRINTLOCK_W39F010,
+	PRINTLOCK_W39L010,
+	PRINTLOCK_W39L020,
+	PRINTLOCK_W39L040,
+	PRINTLOCK_W39V040A,
+	PRINTLOCK_W39V040B,
+	PRINTLOCK_W39V040C,
+	PRINTLOCK_W39V040FA,
+	PRINTLOCK_W39V040FB,
+	PRINTLOCK_W39V040FC,
+	PRINTLOCK_W39V080A,
+	PRINTLOCK_W39V080FA,
+	PRINTLOCK_W39V080FA_DUAL,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT25DF,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT25DF_SEC,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT25F,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT25F4096,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT25F512A,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT25F512B,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT25FS010,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT25FS040,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT26DF081A,
+	SPI_PRETTYPRINT_STATUS_REGISTER_AT45DB,
+	SPI_PRETTYPRINT_STATUS_REGISTER_BP1_SRWD,
+	SPI_PRETTYPRINT_STATUS_REGISTER_BP2_BPL,
+	SPI_PRETTYPRINT_STATUS_REGISTER_BP2_EP_SRWD,
+	SPI_PRETTYPRINT_STATUS_REGISTER_BP2_SRWD,
+	SPI_PRETTYPRINT_STATUS_REGISTER_BP2_TB_BPL,
+	SPI_PRETTYPRINT_STATUS_REGISTER_SRWD_SEC_TB_BP2_WELWIP,
+	SPI_PRETTYPRINT_STATUS_REGISTER_BP3_SRWD,
+	SPI_PRETTYPRINT_STATUS_REGISTER_BP4_SRWD,
+	SPI_PRETTYPRINT_STATUS_REGISTER_DEFAULT_WELWIP,
+	SPI_PRETTYPRINT_STATUS_REGISTER_EN25S_WP,
+	SPI_PRETTYPRINT_STATUS_REGISTER_N25Q,
+	SPI_PRETTYPRINT_STATUS_REGISTER_PLAIN,
+	SPI_PRETTYPRINT_STATUS_REGISTER_SST25,
+	SPI_PRETTYPRINT_STATUS_REGISTER_SST25VF016,
+	SPI_PRETTYPRINT_STATUS_REGISTER_SST25VF040B,
+};
+typedef int (printlockfunc_t)(struct flashctx *flash);
+printlockfunc_t *lookup_printlock_func_ptr(struct flashctx *flash);
 
 struct flashchip {
 	const char *vendor;
@@ -231,6 +448,7 @@ struct flashchip {
 		enum test_state read;
 		enum test_state erase;
 		enum test_state write;
+		enum test_state wp;
 	} tested;
 
 	/*
@@ -245,7 +463,7 @@ struct flashchip {
 		SPI_EDI = 1,
 	} spi_cmd_set;
 
-	int (*probe) (struct flashctx *flash);
+	enum probe_func probe;
 
 	/* Delay after "enter/exit ID mode" commands in microseconds.
 	 * NB: negative values have special meanings, see TIMING_* below.
@@ -255,9 +473,7 @@ struct flashchip {
 	/*
 	 * Erase blocks and associated erase function. Any chip erase function
 	 * is stored as chip-sized virtual block together with said function.
-	 * The first one that fits will be chosen. There is currently no way to
-	 * influence that behaviour. For testing just comment out the other
-	 * elements or set the function pointer to NULL.
+	 * The logic for how to optimally select erase functions is in erasure_layout.c
 	 */
 	struct block_eraser {
 		struct eraseblock {
@@ -266,13 +482,13 @@ struct flashchip {
 		} eraseblocks[NUM_ERASEREGIONS];
 		/* a block_erase function should try to erase one block of size
 		 * 'blocklen' at address 'blockaddr' and return 0 on success. */
-		int (*block_erase) (struct flashctx *flash, unsigned int blockaddr, unsigned int blocklen);
+		enum block_erase_func block_erase;
 	} block_erasers[NUM_ERASEFUNCTIONS];
 
-	int (*printlock) (struct flashctx *flash);
-	int (*unlock) (struct flashctx *flash);
-	int (*write) (struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
-	int (*read) (struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
+	enum printlock_func printlock;
+	enum blockprotect_func unlock;
+	enum write_func write;
+	enum read_func read;
 	struct voltage {
 		uint16_t min;
 		uint16_t max;
@@ -314,12 +530,16 @@ struct flashchip {
 		struct reg_bit_info wps;
 	} reg_bits;
 
-	/* Function that takes a set of WP config bits (e.g. BP, SEC, TB, etc) */
-	/* and determines what protection range they select. */
-	void (*decode_range)(size_t *start, size_t *len, const struct wp_bits *, size_t chip_len);
+	/*
+	 * Function that takes a set of WP config bits (e.g. BP, SEC, TB, etc)
+	 * and determines what protection range they select.
+	 */
+	enum decode_range_func decode_range;
 };
 
-typedef int (*chip_restore_fn_cb_t)(struct flashctx *flash, uint8_t status);
+typedef int (*chip_restore_fn_cb_t)(struct flashctx *flash, void *data);
+typedef int (blockprotect_func_t)(struct flashctx *flash);
+blockprotect_func_t *lookup_blockprotect_func_ptr(const struct flashchip *const chip);
 
 struct flashrom_flashctx {
 	struct flashchip *chip;
@@ -340,6 +560,8 @@ struct flashrom_flashctx {
 		bool force_boardmismatch;
 		bool verify_after_write;
 		bool verify_whole_chip;
+		bool skip_unreadable_regions;
+		bool skip_unwritable_regions;
 	} flags;
 	/* We cache the state of the extended address register (highest byte
 	 * of a 4BA for 3BA instructions) and the state of the 4BA mode here.
@@ -352,7 +574,7 @@ struct flashrom_flashctx {
 	int chip_restore_fn_count;
 	struct chip_restore_func_data {
 		chip_restore_fn_cb_t func;
-		uint8_t status;
+		void *data;
 	} chip_restore_fn[MAX_CHIP_RESTORE_FUNCTIONS];
 	/* Progress reporting */
 	flashrom_progress_callback *progress_callback;
@@ -372,6 +594,7 @@ struct flashrom_flashctx {
 extern const struct flashchip flashchips[];
 extern const unsigned int flashchips_size;
 
+/* parallel.c */
 void chip_writeb(const struct flashctx *flash, uint8_t val, chipaddr addr);
 void chip_writew(const struct flashctx *flash, uint16_t val, chipaddr addr);
 void chip_writel(const struct flashctx *flash, uint32_t val, chipaddr addr);
@@ -408,13 +631,12 @@ size_t strnlen(const char *str, size_t n);
 
 /* flashrom.c */
 extern const char flashrom_version[];
-extern const char *chip_to_probe;
 char *flashbuses_to_text(enum chipbustype bustype);
 int map_flash(struct flashctx *flash);
 void unmap_flash(struct flashctx *flash);
 int read_memmapped(struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
 int erase_flash(struct flashctx *flash);
-int probe_flash(struct registered_master *mst, int startchip, struct flashctx *fill_flash, int force);
+int probe_flash(struct registered_master *mst, int startchip, struct flashctx *flash, int force, const char *const chip_to_probe);
 int verify_range(struct flashctx *flash, const uint8_t *cmpbuf, unsigned int start, unsigned int len);
 void emergency_help_message(void);
 void print_version(void);
@@ -423,18 +645,23 @@ void print_banner(void);
 void list_programmers_linebreak(int startcol, int cols, int paren);
 int selfcheck(void);
 int read_buf_from_file(unsigned char *buf, unsigned long size, const char *filename);
-int read_buf_from_include_args(const struct flashctx *const flash, unsigned char *buf);
 int write_buf_to_file(const unsigned char *buf, unsigned long size, const char *filename);
-int write_buf_to_include_args(const struct flashctx *const flash, unsigned char *buf);
 int prepare_flash_access(struct flashctx *, bool read_it, bool write_it, bool erase_it, bool verify_it);
 void finalize_flash_access(struct flashctx *);
-int register_chip_restore(chip_restore_fn_cb_t func, struct flashctx *flash, uint8_t status);
+int register_chip_restore(chip_restore_fn_cb_t func, struct flashctx *flash, void *data);
+int check_block_eraser(const struct flashctx *flash, int k, int log);
+unsigned int count_usable_erasers(const struct flashctx *flash);
+int need_erase(const uint8_t *have, const uint8_t *want, unsigned int len, enum write_granularity gran, const uint8_t erased_value);
+erasefunc_t *lookup_erase_func_ptr(const struct block_eraser *const eraser);
+int check_erased_range(struct flashctx *flash, unsigned int start, unsigned int len);
+unsigned int get_next_write(const uint8_t *have, const uint8_t *want, unsigned int len, unsigned int *first_start, enum write_granularity gran);
+int write_flash(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 
 /* Something happened that shouldn't happen, but we can go on. */
-#define ERROR_NONFATAL 0x100
+#define ERROR_FLASHROM_NONFATAL 0x100
 
 /* Something happened that shouldn't happen, we'll abort. */
-#define ERROR_FATAL -0xee
+#define ERROR_FLASHROM_FATAL -0xee
 #define ERROR_FLASHROM_BUG -200
 /* We reached one of the hardcoded limits of flashrom. This can be fixed by
  * increasing the limit of a compile-time allocation or by switching to dynamic

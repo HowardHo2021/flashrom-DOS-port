@@ -35,14 +35,26 @@ typedef uint32_t chipsize_t; /* Able to store the number of bytes of any support
 
 #define MAX_ROMLAYOUT	128
 
+struct flash_region {
+	char *name;
+	/*
+	 * Note that because start and end are chipoff_t, end is an inclusive upper
+	 * bound: the length of a region is (end - start + 1) bytes and it is
+	 * impossible to represent a region with zero length.
+	 */
+	chipoff_t start;
+	chipoff_t end;
+	bool read_prot;
+	bool write_prot;
+};
+
 struct romentry {
 	struct romentry *next;
 
-	chipoff_t start;
-	chipoff_t end;
 	bool included;
-	char *name;
 	char *file;
+
+	struct flash_region region;
 };
 
 struct flashrom_layout;
@@ -65,5 +77,7 @@ const struct romentry *layout_next(const struct flashrom_layout *, const struct 
 int included_regions_overlap(const struct flashrom_layout *);
 void prepare_layout_for_extraction(struct flashrom_flashctx *);
 int layout_sanity_checks(const struct flashrom_flashctx *);
+int check_for_unwritable_regions(const struct flashrom_flashctx *flash, unsigned int start, unsigned int len);
+void get_flash_region(const struct flashrom_flashctx *flash, int addr, struct flash_region *region);
 
 #endif /* !__LAYOUT_H__ */

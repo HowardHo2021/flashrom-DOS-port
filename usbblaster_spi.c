@@ -168,16 +168,13 @@ static const struct spi_master spi_master_usbblaster = {
 	.max_data_read	= 256,
 	.max_data_write	= 256,
 	.command	= usbblaster_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
 	.shutdown	= usbblaster_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
 /* Returns 0 upon success, a negative number upon errors. */
-static int usbblaster_spi_init(void)
+static int usbblaster_spi_init(const struct programmer_cfg *cfg)
 {
 	uint8_t buf[BUF_SIZE + 1] = { 0 };
 	struct ftdi_context ftdic;
@@ -232,7 +229,4 @@ const struct programmer_entry programmer_usbblaster_spi = {
 	.type			= USB,
 	.devs.dev		= devs_usbblasterspi,
 	.init			= usbblaster_spi_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

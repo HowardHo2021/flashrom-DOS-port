@@ -1,6 +1,7 @@
 *.d
 !Makefile.d/
 *.o
+/.doctrees
 /.features
 /.dependencies
 /.libdeps
@@ -9,8 +10,10 @@
 /flashrom-*
 /flashrom.exe
 /flashrom.8
+/flashrom.bash
 /libflashrom.a
 /libflashrom-doc/
+/man8
 
 /util/ich_descriptors_tool/ich_descriptors_tool
 /util/ich_descriptors_tool/ich_descriptors_tool.exe
@@ -25,3 +28,6 @@
 /libpci-libgetopt-364/
 /pciutils-3.6.4-DOS/
 /upx-3.96-i386_linux/
+target/
+/target/
+

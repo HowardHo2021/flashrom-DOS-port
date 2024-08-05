@@ -40,11 +40,11 @@ use flashrom::{FlashChip, Flashrom};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::fs::{self, File};
-use std::io::{BufRead, Write};
+use std::io::BufRead;
 use std::sync::atomic::AtomicBool;
 
-const LAYOUT_FILE: &'static str = "/tmp/layout.file";
-const ELOG_FILE: &'static str = "/tmp/elog.file";
+const ELOG_FILE: &str = "/tmp/elog.file";
+const FW_MAIN_B_PATH: &str = "/tmp/FW_MAIN_B.bin";
 
 /// Iterate over tests, yielding only those tests with names matching filter_names.
 ///
@@ -79,6 +79,7 @@ fn filter_tests<'n, 't: 'n, T: TestCase>(
 /// test_names is the case-insensitive names of tests to run; if None, then all
 /// tests are run. Provided names that don't match any known test will be logged
 /// as a warning.
+#[allow(clippy::or_fun_call)] // This is used for to_string here and we don't care.
 pub fn generic<'a, TN: Iterator<Item = &'a str>>(
     cmd: &dyn Flashrom,
     fc: FlashChip,
@@ -86,40 +87,21 @@ pub fn generic<'a, TN: Iterator<Item = &'a str>>(
     output_format: OutputFormat,
     test_names: Option<TN>,
     terminate_flag: Option<&AtomicBool>,
+    crossystem: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     utils::ac_power_warning();
 
-    info!("Calculate ROM partition sizes & Create the layout file.");
-    let rom_sz: i64 = cmd.get_size()?;
-    let layout_sizes = utils::get_layout_sizes(rom_sz)?;
-    {
-        let mut f = File::create(LAYOUT_FILE)?;
-        let mut buf: Vec<u8> = vec![];
-        utils::construct_layout_file(&mut buf, &layout_sizes)?;
-
-        f.write_all(&buf)?;
-        if print_layout {
-            info!(
-                "Dumping layout file as requested:\n{}",
-                String::from_utf8_lossy(&buf)
-            );
-        }
-    }
-
-    info!(
-        "Record crossystem information.\n{}",
-        utils::collect_crosssystem()?
-    );
+    info!("Record crossystem information.\n{}", crossystem);
 
     // Register tests to run:
     let tests: &[&dyn TestCase] = &[
         &("Get_device_name", get_device_name_test),
         &("Coreboot_ELOG_sanity", elog_sanity_test),
         &("Host_is_ChromeOS", host_is_chrome_test),
-        &("Toggle_WP", wp_toggle_test),
+        &("WP_Region_List", wp_region_list_test),
         &("Erase_and_Write", erase_write_test),
         &("Fail_to_verify", verify_fail_test),
-        &("Lock", lock_test),
+        &("HWWP_Locks_SWWP", hwwp_locks_swwp_test),
         &("Lock_top_quad", partial_lock_test(LayoutNames::TopQuad)),
         &(
             "Lock_bottom_quad",
@@ -134,11 +116,8 @@ pub fn generic<'a, TN: Iterator<Item = &'a str>>(
 
     // Limit the tests to only those requested, unless none are requested
     // in which case all tests are included.
-    let mut filter_names: Option<HashSet<String>> = if let Some(names) = test_names {
-        Some(names.map(|s| s.to_lowercase()).collect())
-    } else {
-        None
-    };
+    let mut filter_names: Option<HashSet<String>> =
+        test_names.map(|names| names.map(|s| s.to_lowercase()).collect());
     let tests = filter_tests(tests, &mut filter_names);
 
     let chip_name = cmd
@@ -148,47 +127,49 @@ pub fn generic<'a, TN: Iterator<Item = &'a str>>(
 
     // ------------------------.
     // Run all the tests and collate the findings:
-    let results = tester::run_all_tests(fc, cmd, tests, terminate_flag);
+    let results = tester::run_all_tests(fc, cmd, tests, terminate_flag, print_layout);
 
     // Any leftover filtered names were specified to be run but don't exist
     for leftover in filter_names.iter().flatten() {
         warn!("No test matches filter name \"{}\"", leftover);
     }
 
-    let os_rel = sys_info::os_release().unwrap_or("<Unknown OS>".to_string());
+    let os_release = sys_info::os_release().unwrap_or("<Unknown OS>".to_string());
+    let cros_release = cros_sysinfo::release_description()
+        .unwrap_or("<Unknown or not a ChromeOS release>".to_string());
     let system_info = cros_sysinfo::system_info().unwrap_or("<Unknown System>".to_string());
     let bios_info = cros_sysinfo::bios_info().unwrap_or("<Unknown BIOS>".to_string());
 
     let meta_data = tester::ReportMetaData {
-        chip_name: chip_name,
-        os_release: os_rel,
-        system_info: system_info,
-        bios_info: bios_info,
+        chip_name,
+        os_release,
+        cros_release,
+        system_info,
+        bios_info,
     };
     tester::collate_all_test_runs(&results, meta_data, output_format);
     Ok(())
 }
 
+/// Query the programmer and chip name.
+/// Success means we got something back, which is good enough.
 fn get_device_name_test(env: &mut TestEnv) -> TestResult {
-    // Success means we got something back, which is good enough.
     env.cmd.name()?;
     Ok(())
 }
 
-fn wp_toggle_test(env: &mut TestEnv) -> TestResult {
-    // NOTE: This is not strictly a 'test' as it is allowed to fail on some platforms.
-    //       However, we will warn when it does fail.
-    // List the write-protected regions of flash.
+/// List the write-protectable regions of flash.
+/// NOTE: This is not strictly a 'test' as it is allowed to fail on some platforms.
+///       However, we will warn when it does fail.
+fn wp_region_list_test(env: &mut TestEnv) -> TestResult {
     match env.cmd.wp_list() {
         Ok(list_str) => info!("\n{}", list_str),
         Err(e) => warn!("{}", e),
     };
-    // Fails if unable to set either one
-    env.wp.set_hw(false)?;
-    env.wp.set_sw(false)?;
     Ok(())
 }
 
+/// Verify that enabling hardware and software write protect prevents chip erase.
 fn erase_write_test(env: &mut TestEnv) -> TestResult {
     if !env.is_golden() {
         info!("Memory has been modified; reflashing to ensure erasure can be detected");
@@ -215,37 +196,39 @@ fn erase_write_test(env: &mut TestEnv) -> TestResult {
     Ok(())
 }
 
-fn lock_test(env: &mut TestEnv) -> TestResult {
+/// Verify that enabling hardware write protect prevents disabling software write protect.
+fn hwwp_locks_swwp_test(env: &mut TestEnv) -> TestResult {
     if !env.wp.can_control_hw_wp() {
         return Err("Lock test requires ability to control hardware write protect".into());
     }
 
     env.wp.set_hw(false)?.set_sw(true)?;
-    // Toggling software WP off should work when hardware is off.
-    // Then enable again for another go.
-    env.wp.push().set_sw(false)?;
+    // Toggling software WP off should work when hardware WP is off.
+    // Then enable software WP again for the next test.
+    env.wp.set_sw(false)?.set_sw(true)?;
 
+    // Toggling software WP off should not work when hardware WP is on.
     env.wp.set_hw(true)?;
-    // Clearing should fail when hardware is enabled
     if env.wp.set_sw(false).is_ok() {
         return Err("Software WP was reset despite hardware WP being enabled".into());
     }
     Ok(())
 }
 
+/// Check that the elog contains *something*, as an indication that Coreboot
+/// is actually able to write to the Flash. This only makes sense for chips
+/// running Coreboot, which we assume is just host.
 fn elog_sanity_test(env: &mut TestEnv) -> TestResult {
-    // Check that the elog contains *something*, as an indication that Coreboot
-    // is actually able to write to the Flash. This only makes sense for chips
-    // running Coreboot, which we assume is just host.
-    if env.chip_type() != FlashChip::HOST {
-        info!("Skipping ELOG sanity check for non-host chip");
+    if env.chip_type() != FlashChip::INTERNAL {
+        info!("Skipping ELOG sanity check for non-internal chip");
         return Ok(());
     }
     // flash should be back in the golden state
     env.ensure_golden()?;
 
     const ELOG_RW_REGION_NAME: &str = "RW_ELOG";
-    env.cmd.read_region(ELOG_FILE, ELOG_RW_REGION_NAME)?;
+    env.cmd
+        .read_region_into_file(ELOG_FILE.as_ref(), ELOG_RW_REGION_NAME)?;
 
     // Just checking for the magic numer
     // TODO: improve this test to read the events
@@ -259,6 +242,7 @@ fn elog_sanity_test(env: &mut TestEnv) -> TestResult {
     Ok(())
 }
 
+/// Check that we are running ChromiumOS.
 fn host_is_chrome_test(_env: &mut TestEnv) -> TestResult {
     let release_info = if let Ok(f) = File::open("/etc/os-release") {
         let buf = std::io::BufReader::new(f);
@@ -284,25 +268,27 @@ fn host_is_chrome_test(_env: &mut TestEnv) -> TestResult {
     }
 }
 
+/// Verify that software write protect for a range protects only the requested range.
 fn partial_lock_test(section: LayoutNames) -> impl Fn(&mut TestEnv) -> TestResult {
     move |env: &mut TestEnv| {
         // Need a clean image for verification
         env.ensure_golden()?;
 
         let (wp_section_name, start, len) = utils::layout_section(env.layout(), section);
-        // Disable software WP so we can do range protection, but hardware WP
-        // must remain enabled for (most) range protection to do anything.
-        env.wp.set_hw(false)?.set_sw(false)?;
-        env.cmd.wp_range((start, len), true)?;
+        // Disable hardware WP so we can modify the protected range.
+        env.wp.set_hw(false)?;
+        // Then enable software WP so the range is enforced and enable hardware
+        // WP so that flashrom does not disable software WP during the
+        // operation.
+        env.wp.set_range((start, len), true)?;
         env.wp.set_hw(true)?;
 
         // Check that we cannot write to the protected region.
-        let rws = flashrom::ROMWriteSpecifics {
-            layout_file: Some(LAYOUT_FILE),
-            write_file: Some(env.random_data_file()),
-            name_file: Some(wp_section_name),
-        };
-        if env.cmd.write_file_with_layout(&rws).is_ok() {
+        if env
+            .cmd
+            .write_from_file_region(env.random_data_file(), wp_section_name, &env.layout_file)
+            .is_ok()
+        {
             return Err(
                 "Section should be locked, should not have been overwritable with random data"
                     .into(),
@@ -315,19 +301,28 @@ fn partial_lock_test(section: LayoutNames) -> impl Fn(&mut TestEnv) -> TestResul
         // Check that we can write to the non protected region.
         let (non_wp_section_name, _, _) =
             utils::layout_section(env.layout(), section.get_non_overlapping_section());
-        let rws = flashrom::ROMWriteSpecifics {
-            layout_file: Some(LAYOUT_FILE),
-            write_file: Some(env.random_data_file()),
-            name_file: Some(non_wp_section_name),
-        };
-        env.cmd.write_file_with_layout(&rws)?;
+        env.cmd.write_from_file_region(
+            env.random_data_file(),
+            non_wp_section_name,
+            &env.layout_file,
+        )?;
 
         Ok(())
     }
 }
 
+/// Check that flashrom 'verify' will fail if the provided data does not match the chip data.
 fn verify_fail_test(env: &mut TestEnv) -> TestResult {
-    // Comparing the flash contents to random data says they're not the same.
+    env.ensure_golden()?;
+    // Verify that verify is Ok when the data matches. We verify only a region
+    // and not the whole chip because coprocessors or firmware may have written
+    // some data in other regions.
+    env.cmd
+        .read_region_into_file(FW_MAIN_B_PATH.as_ref(), "FW_MAIN_B")?;
+    env.cmd
+        .verify_region_from_file(FW_MAIN_B_PATH.as_ref(), "FW_MAIN_B")?;
+
+    // Verify that verify is false when the data does not match
     match env.verify(env.random_data_file()) {
         Ok(_) => Err("Verification says flash is full of random data".into()),
         Err(_) => Ok(()),

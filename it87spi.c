@@ -20,6 +20,7 @@
  */
 
 #include <string.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <errno.h>
 #include "flash.h"
@@ -39,7 +40,7 @@
 struct it8716f_spi_data {
 	uint16_t flashport;
 	/* use fast 33MHz SPI (<>0) or slow 16MHz (0) */
-	int fast_spi;
+	bool fast_spi;
 };
 
 static int get_data_from_context(const struct flashctx *flash, struct it8716f_spi_data **data)
@@ -145,7 +146,7 @@ static int it8716f_spi_page_program(struct flashctx *flash, const uint8_t *buf, 
 		if((status & SPI_SR_WIP) == 0)
 			return 0;
 
-		programmer_delay(1000);
+		default_delay(1000);
 	}
 	return 0;
 }
@@ -242,7 +243,7 @@ static int it8716f_spi_chip_read(struct flashctx *flash, uint8_t *buf,
 	if (get_data_from_context(flash, &data) < 0)
 		return SPI_GENERIC_ERROR;
 
-	data->fast_spi = 0;
+	data->fast_spi = false;
 
 	/* FIXME: Check if someone explicitly requested to use IT87 SPI although
 	 * the mainboard does not use IT87 SPI translation. This should be done
@@ -313,22 +314,22 @@ static const struct spi_master spi_master_it87xx = {
 	.max_data_read	= 3,
 	.max_data_write	= MAX_DATA_UNSPECIFIED,
 	.command	= it8716f_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
+	.map_flash_region	= physmap,
+	.unmap_flash_region	= physunmap,
 	.read		= it8716f_spi_chip_read,
 	.write_256	= it8716f_spi_chip_write_256,
 	.write_aai	= spi_chip_write_1,
 	.shutdown	= it8716f_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
-static uint16_t it87spi_probe(uint16_t port)
+static uint16_t it87spi_probe(const struct programmer_cfg *cfg, uint16_t port)
 {
 	uint8_t tmp = 0;
 	uint16_t flashport = 0;
 
 	enter_conf_mode_ite(port);
 
-	char *param = extract_programmer_param_str("dualbiosindex");
+	char *param = extract_programmer_param_str(cfg, "dualbiosindex");
 	if (param != NULL) {
 		sio_write(port, 0x07, 0x07); /* Select GPIO LDN */
 		tmp = sio_read(port, 0xEF);
@@ -394,7 +395,7 @@ static uint16_t it87spi_probe(uint16_t port)
 	flashport |= sio_read(port, 0x65);
 	msg_pdbg("Serial flash port 0x%04x\n", flashport);
 	/* Non-default port requested? */
-	param = extract_programmer_param_str("it87spiport");
+	param = extract_programmer_param_str(cfg, "it87spiport");
 	if (param) {
 		char *endptr = NULL;
 		unsigned long forced_flashport;
@@ -432,7 +433,7 @@ static uint16_t it87spi_probe(uint16_t port)
 	}
 
 	data->flashport = flashport;
-	data->fast_spi = 1;
+	data->fast_spi = true;
 
 	if (internal_buses_supported & BUS_SPI)
 		msg_pdbg("Overriding chipset SPI with IT87 SPI.\n");
@@ -440,7 +441,7 @@ static uint16_t it87spi_probe(uint16_t port)
 	return register_spi_master(&spi_master_it87xx, data);
 }
 
-int init_superio_ite(void)
+int init_superio_ite(const struct programmer_cfg *cfg)
 {
 	int i;
 	int ret = 0;
@@ -458,7 +459,7 @@ int init_superio_ite(void)
 		case 0x8718:
 		case 0x8720:
 		case 0x8728:
-			ret |= it87spi_probe(superios[i].port);
+			ret |= it87spi_probe(cfg, superios[i].port);
 			break;
 		default:
 			msg_pdbg2("Super I/O ID 0x%04hx is not on the list of flash-capable controllers.\n",

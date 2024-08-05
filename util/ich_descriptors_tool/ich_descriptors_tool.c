@@ -38,9 +38,9 @@
 
 static const char *const region_names[] = {
 	"Descriptor", "BIOS", "ME", "GbE", "Platform",
-	"Region5", "BIOS2", "Region7", "EC/BMC", "Region9",
-	"IE", "10GbE", "Region12", "Region13", "Region14",
-	"Region15"
+	"DevExp", "BIOS2", "Region7", "EC/BMC", "DevExp2",
+	"IE", "10GbE0", "10GbE1", "Region13", "Region14",
+	"PTT"
 };
 
 static void dump_file(const char *prefix, const uint32_t *dump, unsigned int len,
@@ -129,6 +129,7 @@ static void usage(char *argv[], const char *error)
 "\t- \"gemini\" for Intel's Gemini Lake SoC.\n"
 "\t- \"jasper\" for Intel's Jasper Lake SoC.\n"
 "\t- \"meteor\" for Intel's Meteor Lake SoC.\n"
+"\t- \"panther\" for Intel's Panther Lake SoC.\n"
 "\t- \"5\" or \"ibex\" for Intel's 5 series chipsets,\n"
 "\t- \"6\" or \"cougar\" for Intel's 6 series chipsets,\n"
 "\t- \"7\" or \"panther\" for Intel's 7 series chipsets.\n"
@@ -248,6 +249,8 @@ int main(int argc, char *argv[])
 			cs = CHIPSET_ELKHART_LAKE;
 		else if (strcmp(csn, "meteor") == 0)
 			cs = CHIPSET_METEOR_LAKE;
+		else if (strcmp(csn, "panther") == 0)
+			cs = CHIPSET_PANTHER_LAKE;
 	}
 
 	ret = read_ich_descriptors_from_dump(buf, len, &cs, &desc);

@@ -87,17 +87,11 @@ static int nicrealtek_shutdown(void *data)
 
 static const struct par_master par_master_nicrealtek = {
 	.chip_readb	= nicrealtek_chip_readb,
-	.chip_readw	= fallback_chip_readw,
-	.chip_readl	= fallback_chip_readl,
-	.chip_readn	= fallback_chip_readn,
 	.chip_writeb	= nicrealtek_chip_writeb,
-	.chip_writew	= fallback_chip_writew,
-	.chip_writel	= fallback_chip_writel,
-	.chip_writen	= fallback_chip_writen,
 	.shutdown	= nicrealtek_shutdown,
 };
 
-static int nicrealtek_init(void)
+static int nicrealtek_init(const struct programmer_cfg *cfg)
 {
 	struct pci_dev *dev = NULL;
 	uint32_t io_base_addr = 0;
@@ -107,7 +101,7 @@ static int nicrealtek_init(void)
 	if (rget_io_perms())
 		return 1;
 
-	dev = pcidev_init(nics_realtek, PCI_BASE_ADDRESS_0);
+	dev = pcidev_init(cfg, nics_realtek, PCI_BASE_ADDRESS_0);
 	if (!dev)
 		return 1;
 
@@ -146,7 +140,4 @@ const struct programmer_entry programmer_nicrealtek = {
 	.type			= PCI,
 	.devs.dev		= nics_realtek,
 	.init			= nicrealtek_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

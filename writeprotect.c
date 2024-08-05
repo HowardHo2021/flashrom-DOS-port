@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "spi.h"
 #include "flash.h"
 #include "libflashrom.h"
 #include "chipdrivers.h"
@@ -30,18 +31,38 @@
  */
 static int wp_write_register(const struct flashctx *flash, enum flash_reg reg, uint8_t value)
 {
+	int ret;
 	if ((flash->mst->buses_supported & BUS_PROG) && flash->mst->opaque.write_register) {
-		return flash->mst->opaque.write_register(flash, reg, value);
+		ret = flash->mst->opaque.write_register(flash, reg, value);
+	} else {
+		ret = spi_write_register(flash, reg, value);
 	}
-	return spi_write_register(flash, reg, value);
+
+	/* Writing SR1 should always be supported, ignore errors for other registers. */
+	if (ret == SPI_INVALID_OPCODE && reg != STATUS1) {
+		msg_pdbg("%s: write to register %d not supported by programmer, ignoring.\n", __func__, reg);
+		ret = 0;
+	}
+	return ret;
 }
 
 static int wp_read_register(const struct flashctx *flash, enum flash_reg reg, uint8_t *value)
 {
+	int ret;
 	if ((flash->mst->buses_supported & BUS_PROG) && flash->mst->opaque.read_register) {
-		return flash->mst->opaque.read_register(flash, reg, value);
+		ret = flash->mst->opaque.read_register(flash, reg, value);
+	} else {
+		ret = spi_read_register(flash, reg, value);
 	}
-	return spi_read_register(flash, reg, value);
+
+	/* Reading SR1 should always be supported, ignore errors for other registers. */
+	if (ret == SPI_INVALID_OPCODE && reg != STATUS1) {
+		msg_pdbg("%s: read from register %d not is supported by programmer, "
+			  "writeprotect operations will assume it contains 0x00.\n", __func__, reg);
+		*value = 0;
+		ret = 0;
+	}
+	return ret;
 }
 
 /** Read and extract a single bit from the chip's registers */
@@ -73,6 +94,25 @@ static enum flashrom_wp_result read_wp_bits(struct wp_bits *bits, struct flashct
 	size_t i;
 	enum flashrom_wp_result ret;
 
+	/*
+	 * Write protection select bit (WPS) controls kind of write protection
+	 * that is used by the chip. When set, BP bits are ignored and each
+	 * block/sector has its own WP bit managed by special commands. When
+	 * the bit is set and we can't change it, just bail out until
+	 * implementation is extended to handle this kind of WP.
+	 */
+	if (bit_map->wps.reg != INVALID_REG && bit_map->wps.writability != RW) {
+		bool wps_bit_present;
+		uint8_t wps;
+
+		ret = read_bit(&wps, &wps_bit_present, flash, bit_map->wps);
+		if (ret != FLASHROM_WP_OK)
+			return ret;
+
+		if (wps_bit_present && wps)
+			return FLASHROM_WP_ERR_UNSUPPORTED_STATE;
+	}
+
 	ret = read_bit(&bits->tb,  &bits->tb_bit_present,  flash, bit_map->tb);
 	if (ret != FLASHROM_WP_OK)
 		return ret;
@@ -93,8 +133,6 @@ static enum flashrom_wp_result read_wp_bits(struct wp_bits *bits, struct flashct
 	if (ret != FLASHROM_WP_OK)
 		return ret;
 
-	/* Note: WPS bit isn't read here, because it's not part of any range. */
-
 	for (i = 0; i < ARRAY_SIZE(bits->bp); i++) {
 		if (bit_map->bp[i].reg == INVALID_REG)
 			break;
@@ -108,39 +146,51 @@ static enum flashrom_wp_result read_wp_bits(struct wp_bits *bits, struct flashct
 	return ret;
 }
 
-/** Helper function for write_wp_bits(). */
+/** Helper function for get_wp_bits_reg_values(). */
 static void set_reg_bit(
-		uint8_t *reg_values, uint8_t *write_masks,
+		uint8_t *reg_values, uint8_t *bit_masks, uint8_t *write_masks,
 		struct reg_bit_info bit, uint8_t value)
 {
 	if (bit.reg != INVALID_REG) {
 		reg_values[bit.reg] |= value << bit.bit_index;
-		write_masks[bit.reg] |= 1 << bit.bit_index;
+		bit_masks[bit.reg] |= 1 << bit.bit_index;
+
+		/* Avoid RO and OTP bits causing a register update */
+		if (bit.writability == RW)
+			write_masks[bit.reg] |= 1 << bit.bit_index;
 	}
+}
+
+/** Convert wp_bits to register values and write masks */
+static void get_wp_bits_reg_values(
+		uint8_t *reg_values, uint8_t *bit_masks, uint8_t *write_masks,
+		const struct reg_bit_map *reg_bits, struct wp_bits bits)
+{
+	memset(reg_values, 0, sizeof(uint8_t) * MAX_REGISTERS);
+	memset(bit_masks, 0, sizeof(uint8_t) * MAX_REGISTERS);
+	memset(write_masks, 0, sizeof(uint8_t) * MAX_REGISTERS);
+
+	for (size_t i = 0; i < bits.bp_bit_count; i++)
+		set_reg_bit(reg_values, bit_masks, write_masks, reg_bits->bp[i], bits.bp[i]);
+
+	set_reg_bit(reg_values, bit_masks, write_masks, reg_bits->tb,  bits.tb);
+	set_reg_bit(reg_values, bit_masks, write_masks, reg_bits->sec, bits.sec);
+	set_reg_bit(reg_values, bit_masks, write_masks, reg_bits->cmp, bits.cmp);
+	set_reg_bit(reg_values, bit_masks, write_masks, reg_bits->srp, bits.srp);
+	set_reg_bit(reg_values, bit_masks, write_masks, reg_bits->srl, bits.srl);
+	/* Note: always setting WPS bit to zero until its fully supported. */
+	set_reg_bit(reg_values, bit_masks, write_masks, reg_bits->wps, 0);
 }
 
 /** Write WP configuration bits to the flash's registers. */
 static enum flashrom_wp_result write_wp_bits(struct flashctx *flash, struct wp_bits bits)
 {
-	size_t i;
-	const struct reg_bit_map *reg_bits = &flash->chip->reg_bits;
+	uint8_t reg_values[MAX_REGISTERS];
+	uint8_t bit_masks[MAX_REGISTERS];	/* masks of valid bits */
+	uint8_t write_masks[MAX_REGISTERS];	/* masks of written bits */
+	get_wp_bits_reg_values(reg_values, bit_masks, write_masks, &flash->chip->reg_bits, bits);
 
-	/* Convert wp_bits to register values and write masks */
-	uint8_t reg_values[MAX_REGISTERS] = {0};
-	uint8_t write_masks[MAX_REGISTERS] = {0};
-
-	for (i = 0; i < bits.bp_bit_count; i++)
-		set_reg_bit(reg_values, write_masks, reg_bits->bp[i], bits.bp[i]);
-
-	set_reg_bit(reg_values, write_masks, reg_bits->tb,  bits.tb);
-	set_reg_bit(reg_values, write_masks, reg_bits->sec, bits.sec);
-	set_reg_bit(reg_values, write_masks, reg_bits->cmp, bits.cmp);
-	set_reg_bit(reg_values, write_masks, reg_bits->srp, bits.srp);
-	set_reg_bit(reg_values, write_masks, reg_bits->srl, bits.srl);
-	/* Note: always setting WPS bit to zero until its fully supported. */
-	set_reg_bit(reg_values, write_masks, reg_bits->wps, 0);
-
-	/* Write each register */
+	/* Write each register whose value was updated */
 	for (enum flash_reg reg = STATUS1; reg < MAX_REGISTERS; reg++) {
 		if (!write_masks[reg])
 			continue;
@@ -149,36 +199,65 @@ static enum flashrom_wp_result write_wp_bits(struct flashctx *flash, struct wp_b
 		if (wp_read_register(flash, reg, &value))
 			return FLASHROM_WP_ERR_READ_FAILED;
 
-		value = (value & ~write_masks[reg]) | (reg_values[reg] & write_masks[reg]);
+		/* Skip unnecessary register writes */
+		uint8_t actual = value & write_masks[reg];
+		uint8_t expected = reg_values[reg] & write_masks[reg];
+		if (actual == expected)
+			continue;
+
+		value = (value & ~write_masks[reg]) | expected;
 
 		if (wp_write_register(flash, reg, value))
 			return FLASHROM_WP_ERR_WRITE_FAILED;
 	}
 
-	/* Verify each register */
+	enum flashrom_wp_result ret = FLASHROM_WP_OK;
+	/* Verify each register even if write to it was skipped */
 	for (enum flash_reg reg = STATUS1; reg < MAX_REGISTERS; reg++) {
-		if (!write_masks[reg])
+		if (!bit_masks[reg])
 			continue;
 
 		uint8_t value;
 		if (wp_read_register(flash, reg, &value))
 			return FLASHROM_WP_ERR_READ_FAILED;
 
-		uint8_t actual = value & write_masks[reg];
-		uint8_t expected = reg_values[reg] & write_masks[reg];
+		msg_cdbg2("%s: wp_verify reg:%u value:0x%x\n", __func__, reg, value);
+		uint8_t actual = value & bit_masks[reg];
+		uint8_t expected = reg_values[reg] & bit_masks[reg];
 
-		if (actual != expected)
-			return FLASHROM_WP_ERR_VERIFY_FAILED;
+		if (actual != expected) {
+			msg_cdbg("%s: wp_verify failed: reg:%u actual:0x%x expected:0x%x\n",
+				 __func__, reg, actual, expected);
+			ret = FLASHROM_WP_ERR_VERIFY_FAILED;
+		}
 	}
 
-	return FLASHROM_WP_OK;
+	return ret;
 }
+
+static decode_range_func_t *lookup_decode_range_func_ptr(const struct flashchip *chip)
+{
+	switch (chip->decode_range) {
+		case DECODE_RANGE_SPI25: return &decode_range_spi25;
+		case DECODE_RANGE_SPI25_64K_BLOCK: return &decode_range_spi25_64k_block;
+		case DECODE_RANGE_SPI25_BIT_CMP: return &decode_range_spi25_bit_cmp;
+		case DECODE_RANGE_SPI25_2X_BLOCK: return &decode_range_spi25_2x_block;
+	/* default: total function, 0 indicates no decode range function set. */
+		case NO_DECODE_RANGE_FUNC: return NULL;
+	};
+
+	return NULL;
+}
+
 
 /** Get the range selected by a WP configuration. */
 static enum flashrom_wp_result get_wp_range(struct wp_range *range, struct flashctx *flash, const struct wp_bits *bits)
 {
-	flash->chip->decode_range(&range->start, &range->len, bits, flashrom_flash_getsize(flash));
+	decode_range_func_t *decode_range = lookup_decode_range_func_ptr(flash->chip);
+	if (decode_range == NULL)
+		return FLASHROM_WP_ERR_OTHER;
 
+	decode_range(&range->start, &range->len, bits, flashrom_flash_getsize(flash));
 	return FLASHROM_WP_OK;
 }
 
@@ -424,7 +503,7 @@ static int set_wp_mode(struct wp_bits *bits, const enum flashrom_wp_mode mode)
 
 static bool chip_supported(struct flashctx *flash)
 {
-	return (flash->chip != NULL) && (flash->chip->decode_range != NULL);
+	return (flash->chip != NULL) && (flash->chip->decode_range != NO_DECODE_RANGE_FUNC);
 }
 
 
@@ -517,4 +596,32 @@ enum flashrom_wp_result wp_get_available_ranges(struct flashrom_wp_ranges **list
 out:
 	free(range_pairs);
 	return ret;
+}
+
+enum flashrom_wp_result wp_cfg_to_reg_values(
+		uint8_t *reg_values, uint8_t *bit_masks, uint8_t *write_masks,
+		struct flashctx *flash, const struct flashrom_wp_cfg *cfg)
+{
+	struct wp_bits bits;
+
+	if (!chip_supported(flash))
+		return FLASHROM_WP_ERR_CHIP_UNSUPPORTED;
+
+	enum flashrom_wp_result ret = read_wp_bits(&bits, flash);
+	if (ret != FLASHROM_WP_OK)
+		return ret;
+
+	/* Set protection range */
+	ret = set_wp_range(&bits, flash, cfg->range);
+	if (ret != FLASHROM_WP_OK)
+		return ret;
+
+	/* Set protection mode */
+	ret = set_wp_mode(&bits, cfg->mode);
+	if (ret != FLASHROM_WP_OK)
+		return ret;
+
+	get_wp_bits_reg_values(reg_values, bit_masks, write_masks, &flash->chip->reg_bits, bits);
+
+	return FLASHROM_WP_OK;
 }

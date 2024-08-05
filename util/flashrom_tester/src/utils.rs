@@ -101,19 +101,20 @@ pub fn construct_layout_file<F: Write>(mut target: F, ls: &LayoutSizes) -> std::
 
 pub fn toggle_hw_wp(dis: bool) -> Result<(), String> {
     // The easist way to toggle the hardware write-protect is
-    // to {dis}connect the battery (and/or open the WP screw).
+    // to {dis}connect the battery (and/or {open,close} the WP screw).
     let s = if dis { "dis" } else { "" };
-    info!("Prompt for hardware WP {}able", s);
-    eprintln!(" > {}connect the battery (and/or open the WP screw)", s);
-    pause();
-    let wp = get_hardware_wp()?;
-    if wp && dis {
-        eprintln!("Hardware write protect is still ENABLED!");
-        return toggle_hw_wp(dis);
-    }
-    if !wp && !dis {
-        eprintln!("Hardware write protect is still DISABLED!");
-        return toggle_hw_wp(dis);
+    let screw_state = if dis { "open" } else { "close" };
+    // Print a failure message, but not on the first try.
+    let mut fail_msg = None;
+    while dis == get_hardware_wp()? {
+        if let Some(msg) = fail_msg {
+            eprintln!("{msg}");
+        }
+        fail_msg = Some(format!("Hardware write protect is still {}!", !dis));
+        // The following message is read by the tast test. Do not modify.
+        info!("Prompt for hardware WP {}able", s);
+        eprintln!(" > {}connect the battery (and/or {} the WP screw)", s, screw_state);
+        pause();
     }
     Ok(())
 }
@@ -126,21 +127,36 @@ pub fn ac_power_warning() {
 }
 
 fn pause() {
-    let mut stdout = std::io::stdout();
-    // We want the cursor to stay at the end of the line, so we print without a newline
-    // and flush manually.
-    stdout.write(b"Press any key to continue...").unwrap();
-    stdout.flush().unwrap();
-    std::io::stdin().read(&mut [0]).unwrap();
+    // The following message is read by the tast test. Do not modify.
+    println!("Press enter to continue...");
+    // Rust stdout is always LineBuffered at time of writing.
+    // But this is not guaranteed, so flush anyway.
+    std::io::stdout().flush().unwrap();
+    // This reads one line, there is no guarantee the line came
+    // after the above prompt. But it is good enough.
+    if std::io::stdin().read_line(&mut String::new()).unwrap() == 0 {
+        panic!("stdin closed");
+    }
 }
 
 pub fn get_hardware_wp() -> std::result::Result<bool, String> {
-    let (_, wp) = parse_crosssystem(&collect_crosssystem()?)?;
-    Ok(wp)
+    let wp_s_val = collect_crosssystem(&["wpsw_cur"])?.parse::<u32>();
+    match wp_s_val {
+        Ok(v) => {
+            if v == 1 {
+                Ok(true)
+            } else if v == 0 {
+                Ok(false)
+            } else {
+                Err("Unknown write protect value".into())
+            }
+        }
+        Err(_) => Err("Cannot parse write protect value".into()),
+    }
 }
 
-pub fn collect_crosssystem() -> Result<String, String> {
-    let cmd = match Command::new("crossystem").output() {
+pub fn collect_crosssystem(args: &[&str]) -> Result<String, String> {
+    let cmd = match Command::new("crossystem").args(args).output() {
         Ok(x) => x,
         Err(e) => return Err(format!("Failed to run crossystem: {}", e)),
     };
@@ -150,39 +166,6 @@ pub fn collect_crosssystem() -> Result<String, String> {
     };
 
     Ok(String::from_utf8_lossy(&cmd.stdout).into_owned())
-}
-
-fn parse_crosssystem(s: &str) -> Result<(Vec<&str>, bool), &'static str> {
-    // grep -v 'fwid +=' | grep -v 'hwid +='
-    let sysinfo = s
-        .split_terminator("\n")
-        .filter(|s| !s.contains("fwid +=") && !s.contains("hwid +="));
-
-    let state_line = match sysinfo.clone().filter(|s| s.starts_with("wpsw_cur")).next() {
-        None => return Err("No wpsw_cur in system info"),
-        Some(line) => line,
-    };
-    let wp_s_val = state_line
-        .trim_start_matches("wpsw_cur")
-        .trim_start_matches(' ')
-        .trim_start_matches('=')
-        .trim_start_matches(' ')
-        .get(..1)
-        .unwrap()
-        .parse::<u32>();
-
-    match wp_s_val {
-        Ok(v) => {
-            if v == 1 {
-                return Ok((sysinfo.collect(), true));
-            } else if v == 0 {
-                return Ok((sysinfo.collect(), false));
-            } else {
-                return Err("Unknown state value");
-            }
-        }
-        Err(_) => return Err("Cannot parse state value"),
-    }
 }
 
 pub fn translate_command_error(output: &std::process::Output) -> std::io::Error {
@@ -254,57 +237,6 @@ mod tests {
                 bottom_quad_top: 0x3FFF,
                 top_quad_bottom: 0xC000,
             }
-        );
-    }
-
-    #[test]
-    fn parse_crosssystem() {
-        use super::parse_crosssystem;
-
-        assert_eq!(
-            parse_crosssystem("This is not the tool you are looking for").err(),
-            Some("No wpsw_cur in system info")
-        );
-
-        assert_eq!(
-            parse_crosssystem("wpsw_cur = ERROR").err(),
-            Some("Cannot parse state value")
-        );
-
-        assert_eq!(
-            parse_crosssystem("wpsw_cur = 3").err(),
-            Some("Unknown state value")
-        );
-
-        assert_eq!(
-            parse_crosssystem("wpsw_cur = 0"),
-            Ok((vec!["wpsw_cur = 0"], false))
-        );
-
-        assert_eq!(
-            parse_crosssystem("wpsw_cur = 1"),
-            Ok((vec!["wpsw_cur = 1"], true))
-        );
-
-        assert_eq!(
-            parse_crosssystem("wpsw_cur=1"),
-            Ok((vec!["wpsw_cur=1"], true))
-        );
-
-        assert_eq!(
-            parse_crosssystem(
-                "fwid += 123wpsw_cur\n\
-                 hwid += aaaaa\n\
-                 wpsw_boot                  = 0                      # [RO/int]\n\
-                 wpsw_cur                   = 1                      # [RO/int]\n"
-            ),
-            Ok((
-                vec![
-                    "wpsw_boot                  = 0                      # [RO/int]",
-                    "wpsw_cur                   = 1                      # [RO/int]"
-                ],
-                true
-            ))
         );
     }
 }

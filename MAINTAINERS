@@ -1,5 +1,4 @@
 
-
 		    List of upstream flashrom maintainers
 
 This represents the list of maintainers that work on the upstream flashrom
@@ -9,11 +8,8 @@ don't have a maintainer. If you are looking for reviewers for such a subtree,
 it's often a good choice to look at the git history to see who worked on
 it last.
 
-Please try to follow our [development guidelines]. This will make things
-easier on the maintainers. Not all of these guidelines matter for every
-trivial patch. So apply some common sense.
-
-[development guidelines]: https://www.flashrom.org/Development_Guidelines
+Please follow our development guide:
+https://www.flashrom.org/dev_guide/development_guide.html
 
 Happy hacking!
 
@@ -81,7 +77,7 @@ Maintainers List (try to look for most precise areas first)
 ################################################################################
 
 BUILD SYSTEM
-M:	Thomas Heijligen <src@posteo.de>
+M:	Peter Marheine <pmarheine@chromium.org>
 S:	Maintained
 F:	Makefile*
 F:	meson*
@@ -91,6 +87,20 @@ F:	*/Makefile*
 F:	util/ich_descriptors_tool/meson*
 F:	util/ich_descriptors_tool/Makefile*
 
+ERASE/WRITE ALGORITHM
+M:	Aarya Chaumal <aarya.chaumal@gmail.com>
+S:	Maintained
+F:	erasure_layout*
+F:	include/erasure_layout*
+
+FLASHCHIPS
+M:	Anastasia Klimchuk <aklm@chromium.org>
+M:	Nikolai Artemiev <nartemiev@google.com>
+M:	Stefan Reinauer <stefan.reinauer@coreboot.org>
+S:	Maintained
+F:	flashchips*
+F:	include/flashchips*
+
 I2C HELPERS
 M:	Peter Marheine <pmarheine@chromium.org>
 S:	Supported
@@ -98,13 +108,49 @@ F:	i2c_helper_linux.c
 
 WRITEPROTECT
 M:	Nikolai Artemiev <nartemiev@google.com>
+M:	Sergii Dmytruk <sergii.dmytruk@3mdeb.com>
 S:	Supported
 F:	writeprotect*
 F:	include/writeprotect*
 
 ################################################################################
+# DOCUMENTATION
+################################################################################
+
+MAINTAINERS
+M:	Anastasia Klimchuk <aklm@chromium.org>
+S:	Maintained
+F:	MAINTAINERS
+
+SPHINX DOCS
+M:	Anastasia Klimchuk <aklm@chromium.org>
+S:	Maintained
+F:	doc/
+F:	README.rst
+
+################################################################################
 # PROGRAMMERS
 ################################################################################
+
+AMD SB600SPI
+M:	Martin Roth <gaumless@tutanota.com>
+S:	Maintained
+F:	sb600spi.c
+
+BUS PIRATE
+M:	David Reguera <regueragarciadavid@gmail.com>
+S:	Maintained
+F:	buspirate_spi.c
+
+CH347
+M:	Nicholas Chin <nic.c3.14@gmail.com>
+S:	Maintained
+F:	ch347_spi.c
+
+DirtyJTAG
+M:	Jean THOMAS <virgule@jeanthomas.me>
+S:	Maintained
+F:	dirtyjtag_spi.c
 
 I2C PROGRAMMERS
 M:	Peter Marheine <pmarheine@chromium.org>
@@ -118,12 +164,52 @@ M:	Nikolai Artemiev <nartemiev@google.com>
 S:	Supported
 F:	linux_mtd.c
 
+National Instruments USB-845x
+M:	Miklos Marton <martonmiklosqdev@gmail.com>
+S:	Maintained
+F:	ni845x_spi.c
+
+RAIDEN DEBUG SPI
+M:	Nikolai Artemiev <nartemiev@google.com>
+S:	Maintained
+F:	raiden_debug_spi.c
+
+STLINK-V3
+M:	Miklos Marton <martonmiklosqdev@gmail.com>
+S:	Maintained
+F:	stlinkv3_spi.c
+
 ################################################################################
 # TESTS
 ################################################################################
 
 UNIT TESTS
 M:	Anastasia Klimchuk <aklm@chromium.org>
-S:	Supported
+S:	Maintained
 F:	tests/
 F:	subprojects/cmocka.wrap
+
+################################################################################
+# UTILS
+################################################################################
+
+BASH COMPLETION
+M:	Alexander Goncharov <chat@joursoir.net>
+S:	Maintained
+F:	util/flashrom.bash-completion.tmpl
+
+CONTINUOUS INTEGRATION SCRIPT
+M:	Anastasia Klimchuk <aklm@chromium.org>
+S:	Maintained
+F:	test_build.sh
+
+FLASHROM TESTER
+M:	Hsuan Ting Chen <roccochen@google.com>
+R:	Evan Benn <evanbenn@gmail.com>
+S:	Supported
+F:	util/flashrom_tester/
+
+FLASHROM DOCKER
+M:	Stefan Reinauer <stefan.reinauer@coreboot.org>
+S:	Maintained
+F:	util/docker/

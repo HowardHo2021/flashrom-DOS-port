@@ -39,10 +39,9 @@ static void run_lifecycle(void **state, const struct io_mock *io, const struct p
 	io_mock_register(io);
 
 	struct flashrom_programmer *flashprog;
-	char *param_dup = strdup(param);
 
 	printf("Testing flashrom_programmer_init for programmer=%s ...\n", prog->name);
-	assert_int_equal(0, flashrom_programmer_init(&flashprog, prog->name, param_dup));
+	assert_int_equal(0, flashrom_programmer_init(&flashprog, prog->name, param));
 	printf("... flashrom_programmer_init for programmer=%s successful\n", prog->name);
 
 	if (action)
@@ -51,8 +50,6 @@ static void run_lifecycle(void **state, const struct io_mock *io, const struct p
 	printf("Testing flashrom_programmer_shutdown for programmer=%s ...\n", prog->name);
 	assert_int_equal(0, flashrom_programmer_shutdown(flashprog));
 	printf("... flashrom_programmer_shutdown for programmer=%s successful\n", prog->name);
-
-	free(param_dup);
 
 	io_mock_register(NULL);
 }
@@ -71,4 +68,31 @@ void run_probe_lifecycle(void **state, const struct io_mock *io,
 	/* Each probe lifecycle should run independently, without cache. */
 	clear_spi_id_cache();
 	run_lifecycle(state, io, prog, param, chip_name, &probe_chip);
+}
+
+void run_init_error_path(void **state, const struct io_mock *io, const struct programmer_entry *prog,
+				const char *param, const int error_code)
+{
+	(void) state; /* unused */
+
+	io_mock_register(io);
+
+	struct flashrom_programmer *flashprog;
+
+	printf("Testing init error path for programmer=%s with params: %s ...\n", prog->name, param);
+	assert_int_equal(error_code, flashrom_programmer_init(&flashprog, prog->name, param));
+	printf("... init failed with error code %i as expected\n", error_code);
+
+	/*
+	 * `flashrom_programmer_shutdown` runs only registered shutdown functions, which means
+	 * if nothing has been registered then nothing runs.
+	 * Since this is testing error path on initialisation and error can happen at different
+	 * phases of init, we don't know whether shutdown function has already been registered
+	 * or not yet. Running `flashrom_programmer_shutdown` covers both situations.
+	 */
+	printf("Running programmer shutdown in case anything got registered...\n");
+	assert_int_equal(0, flashrom_programmer_shutdown(flashprog));
+	printf("... completed\n");
+
+	io_mock_register(NULL);
 }

@@ -7,26 +7,42 @@ MULTIARCH_TAGS := \
 	centos\:7.6-armhfp-clean centos\:7.6-amd64-clean \
 	centos\:7.3-aarch64-clean centos\:7.3-amd64-clean \
 	centos\:7.2-amd64-clean \
-	$(foreach a,x86_64 s390x aarch64, fedora\:30-$(a)) \
-	$(foreach a,x86_64 s390x ppc64le aarch64, fedora\:29-$(a)) \
-	fedora\:28-armhfp \
-	$(foreach a,x86_64 ppc64le aarch64, \
-	  $(foreach v,25 24, \
+	$(foreach a,x86_64 aarch64, \
+	  $(foreach v,34 33 32 31 30 29 25 24, \
 	    fedora\:$(v)-$(a))) \
-	$(foreach a,ppc64el arm64 armhf mips mipsel amd64 i386, \
-	  $(foreach v,sid buster stretch, \
+	$(foreach a,ppc64le, \
+	  $(foreach v,34 33 29 25 24, \
+	    fedora\:$(v)-$(a))) \
+	$(foreach a,s390x, \
+	  $(foreach v,34 33 32 31 30 29, \
+	    fedora\:$(v)-$(a))) \
+	fedora\:28-armhfp \
+	$(foreach a,ppc64el armhf mipsel amd64 i386, \
+	  $(foreach v,bullseye buster stretch, \
 	    debian-debootstrap\:$(a)-$(v))) \
-	$(foreach a,ppc64el arm64 armhf amd64 i386, \
+	$(foreach a,arm64 mips, \
+	  $(foreach v,buster stretch, \
+	    debian-debootstrap\:$(a)-$(v))) \
+	$(foreach a,ppc64el arm64 armhf amd64, \
+	  $(foreach v,jammy focal bionic xenial, \
+	    ubuntu-debootstrap\:$(a)-$(v))) \
+	$(foreach a,i386, \
 	  $(foreach v,bionic xenial, \
 	    ubuntu-debootstrap\:$(a)-$(v))) \
 	ubuntu-debootstrap\:powerpc-xenial \
 	$(foreach a,aarch64 armhf amd64 i386, \
-	  $(foreach v,v3.9 v3.8 v3.7 v3.6, \
+	  $(foreach v,v3.14 v3.13 v3.12 v3.11 v3.10 v3.9 v3.8 v3.7 v3.6, \
 	    alpine\:$(a)-$(v))) \
 
 OTHER_TAGS := djgpp\:6.1.0
 
 ALL_TAGS := $(ANITA_TAGS) $(MULTIARCH_TAGS) $(OTHER_TAGS)
+
+BROKEN_TAGS := anita\:7.1-amd64 anita\:7.1-i386 \
+	       centos\:7.6-armhfp-clean \
+	       fedora\:30-s390x fedora\:28-armhfp \
+
+WORKING_TAGS := $(filter-out $(BROKEN_TAGS),$(ALL_TAGS))
 
 arch_filter = $(sort \
 	$(foreach arch,$(1), \
@@ -65,7 +81,6 @@ DEFAULT_TAGS := \
 	debian-debootstrap\:mipsel-stretch \
 	debian-debootstrap\:amd64-stretch \
 	debian-debootstrap\:i386-stretch \
-	debian-debootstrap\:amd64-sid \
 	ubuntu-debootstrap\:arm64-xenial \
 	ubuntu-debootstrap\:amd64-xenial \
 	ubuntu-debootstrap\:powerpc-xenial \
@@ -175,6 +190,8 @@ default: $(DEFAULT_TAGS)
 
 native: $(NATIVE_TAGS)
 
+working: $(WORKING_TAGS)
+
 all: $(ALL_TAGS)
 
 1.0.x: export TEST_REVISION=refs/heads/1.0.x
@@ -188,6 +205,9 @@ show-default:
 
 show-native:
 	@printf "%s\n" $(NATIVE_TAGS)
+
+show-working:
+	@printf "%s\n" $(WORKING_TAGS)
 
 show-all:
 	@printf "%s\n" $(ALL_TAGS)
