@@ -14,6 +14,7 @@
  * GNU General Public License for more details.
  */
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include "flash.h"
@@ -29,8 +30,13 @@
 #define GFXNVIDIA_MEMMAP_MASK		((1 << 17) - 1)
 #define GFXNVIDIA_MEMMAP_SIZE		(16 * 1024 * 1024)
 
+#define REG_FLASH_ACCESS	0x50
+#define BIT_FLASH_ACCESS	BIT(0)
+
 struct gfxnvidia_data {
+	struct pci_dev *dev;
 	uint8_t *bar;
+	uint32_t flash_access;
 };
 
 static const struct dev_entry gfx_nvidia[] = {
@@ -79,29 +85,28 @@ static uint8_t gfxnvidia_chip_readb(const struct flashctx *flash,
 
 static int gfxnvidia_shutdown(void *par_data)
 {
+	struct gfxnvidia_data *data = par_data;
+
+	/* Restore original flash interface access state. */
+	pci_write_long(data->dev, REG_FLASH_ACCESS, data->flash_access);
+
 	free(par_data);
 	return 0;
 }
 
 static const struct par_master par_master_gfxnvidia = {
 	.chip_readb	= gfxnvidia_chip_readb,
-	.chip_readw	= fallback_chip_readw,
-	.chip_readl	= fallback_chip_readl,
-	.chip_readn	= fallback_chip_readn,
 	.chip_writeb	= gfxnvidia_chip_writeb,
-	.chip_writew	= fallback_chip_writew,
-	.chip_writel	= fallback_chip_writel,
-	.chip_writen	= fallback_chip_writen,
 	.shutdown	= gfxnvidia_shutdown,
 };
 
-static int gfxnvidia_init(void)
+static int gfxnvidia_init(const struct programmer_cfg *cfg)
 {
 	struct pci_dev *dev = NULL;
 	uint32_t reg32;
 	uint8_t *bar;
 
-	dev = pcidev_init(gfx_nvidia, PCI_BASE_ADDRESS_0);
+	dev = pcidev_init(cfg, gfx_nvidia, PCI_BASE_ADDRESS_0);
 	if (!dev)
 		return 1;
 
@@ -110,7 +115,7 @@ static int gfxnvidia_init(void)
 		return 1;
 
 	io_base_addr += 0x300000;
-	msg_pinfo("Detected NVIDIA I/O base address: 0x%x.\n", io_base_addr);
+	msg_pinfo("Detected NVIDIA I/O base address: 0x%"PRIx32".\n", io_base_addr);
 
 	bar = rphysmap("NVIDIA", io_base_addr, GFXNVIDIA_MEMMAP_SIZE);
 	if (bar == ERROR_PTR)
@@ -121,15 +126,16 @@ static int gfxnvidia_init(void)
 		msg_perr("Unable to allocate space for PAR master data\n");
 		return 1;
 	}
+	data->dev = dev;
 	data->bar = bar;
 
 	/* Allow access to flash interface (will disable screen). */
-	reg32 = pci_read_long(dev, 0x50);
-	reg32 &= ~(1 << 0);
-	rpci_write_long(dev, 0x50, reg32);
+	data->flash_access = pci_read_long(dev, REG_FLASH_ACCESS);
+	reg32 = data->flash_access & ~BIT_FLASH_ACCESS;
+	pci_write_long(dev, REG_FLASH_ACCESS, reg32);
 
 	/* Write/erase doesn't work. */
-	programmer_may_write = 0;
+	programmer_may_write = false;
 	return register_par_master(&par_master_gfxnvidia, BUS_PARALLEL, data);
 }
 
@@ -138,7 +144,4 @@ const struct programmer_entry programmer_gfxnvidia = {
 	.type			= PCI,
 	.devs.dev		= gfx_nvidia,
 	.init			= gfxnvidia_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

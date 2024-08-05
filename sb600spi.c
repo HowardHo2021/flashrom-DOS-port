@@ -18,6 +18,7 @@
  * GNU General Public License for more details.
  */
 
+#include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
 #include "flash.h"
@@ -408,19 +409,19 @@ static int set_mode(struct pci_dev *dev, uint8_t mode, uint8_t *sb600_spibar)
 	return 0;
 }
 
-static int handle_speed(struct pci_dev *dev, enum amd_chipset amd_gen, uint8_t *sb600_spibar)
+static int handle_speed(const struct programmer_cfg *cfg,
+		struct pci_dev *dev, enum amd_chipset amd_gen, uint8_t *sb600_spibar)
 {
 	uint32_t tmp;
 	int16_t spispeed_idx = -1;
 	int16_t spireadmode_idx = -1;
-	char *spispeed;
-	char *spireadmode;
+	char *param_str;
 
-	spispeed = extract_programmer_param_str("spispeed");
-	if (spispeed != NULL) {
+	param_str = extract_programmer_param_str(cfg, "spispeed");
+	if (param_str != NULL) {
 		unsigned int i;
 		for (i = 0; i < ARRAY_SIZE(spispeeds); i++) {
-			if (strcasecmp(spispeeds[i], spispeed) == 0) {
+			if (strcasecmp(spispeeds[i], param_str) == 0) {
 				spispeed_idx = i;
 				break;
 			}
@@ -429,36 +430,36 @@ static int handle_speed(struct pci_dev *dev, enum amd_chipset amd_gen, uint8_t *
 		 * Error out on speeds not present in the spispeeds array.
 		 * Only Yangtze supports the second half of indices.
 		 * No 66 MHz before SB8xx. */
-		if ((strcasecmp(spispeed, "reserved") == 0) ||
+		if ((strcasecmp(param_str, "reserved") == 0) ||
 		    (i == ARRAY_SIZE(spispeeds)) ||
 		    (amd_gen < CHIPSET_YANGTZE && spispeed_idx > 3) ||
 		    (amd_gen < CHIPSET_SB89XX && spispeed_idx == 0)) {
-			msg_perr("Error: Invalid spispeed value: '%s'.\n", spispeed);
-			free(spispeed);
+			msg_perr("Error: Invalid spispeed value: '%s'.\n", param_str);
+			free(param_str);
 			return 1;
 		}
-		free(spispeed);
+		free(param_str);
 	}
 
-	spireadmode = extract_programmer_param_str("spireadmode");
-	if (spireadmode != NULL) {
+	param_str = extract_programmer_param_str(cfg, "spireadmode");
+	if (param_str != NULL) {
 		unsigned int i;
 		for (i = 0; i < ARRAY_SIZE(spireadmodes); i++) {
-			if (strcasecmp(spireadmodes[i], spireadmode) == 0) {
+			if (strcasecmp(spireadmodes[i], param_str) == 0) {
 				spireadmode_idx = i;
 				break;
 			}
 		}
-		if ((strcasecmp(spireadmode, "reserved") == 0) ||
+		if ((strcasecmp(param_str, "reserved") == 0) ||
 		    (i == ARRAY_SIZE(spireadmodes))) {
-			msg_perr("Error: Invalid spireadmode value: '%s'.\n", spireadmode);
-			free(spireadmode);
+			msg_perr("Error: Invalid spireadmode value: '%s'.\n", param_str);
+			free(param_str);
 			return 1;
 		}
 		if (amd_gen < CHIPSET_BOLTON) {
 			msg_perr("Warning: spireadmode not supported for this chipset.");
 		}
-		free(spireadmode);
+		free(param_str);
 	}
 
 	/* See the chipset support matrix for SPI Base_Addr below for an explanation of the symbols used.
@@ -522,27 +523,27 @@ static int handle_speed(struct pci_dev *dev, enum amd_chipset amd_gen, uint8_t *
 	return set_speed(dev, amd_gen, spispeed_idx, sb600_spibar);
 }
 
-static int handle_imc(struct pci_dev *dev, enum amd_chipset amd_gen)
+static int handle_imc(const struct programmer_cfg *cfg, struct pci_dev *dev, enum amd_chipset amd_gen)
 {
 	/* Handle IMC everywhere but sb600 which does not have one. */
 	if (amd_gen == CHIPSET_SB6XX)
 		return 0;
 
 	bool amd_imc_force = false;
-	char *arg = extract_programmer_param_str("amd_imc_force");
-	if (arg && !strcmp(arg, "yes")) {
+	char *param_value = extract_programmer_param_str(cfg, "amd_imc_force");
+	if (param_value && !strcmp(param_value, "yes")) {
 		amd_imc_force = true;
 		msg_pspew("amd_imc_force enabled.\n");
-	} else if (arg && !strlen(arg)) {
+	} else if (param_value && !strlen(param_value)) {
 		msg_perr("Missing argument for amd_imc_force.\n");
-		free(arg);
+		free(param_value);
 		return 1;
-	} else if (arg) {
-		msg_perr("Unknown argument for amd_imc_force: \"%s\" (not \"yes\").\n", arg);
-		free(arg);
+	} else if (param_value) {
+		msg_perr("Unknown argument for amd_imc_force: \"%s\" (not \"yes\").\n", param_value);
+		free(param_value);
 		return 1;
 	}
-	free(arg);
+	free(param_value);
 
 	/* TODO: we should not only look at IntegratedImcPresent (LPC Dev 20, Func 3, 40h) but also at
 	 * IMCEnable(Strap) and Override EcEnable(Strap) (sb8xx, sb9xx?, a50, Bolton: Misc_Reg: 80h-87h;
@@ -554,7 +555,7 @@ static int handle_imc(struct pci_dev *dev, enum amd_chipset amd_gen)
 	}
 
 	if (!amd_imc_force)
-		programmer_may_write = 0;
+		programmer_may_write = false;
 	msg_pinfo("Writes have been disabled for safety reasons because the presence of the IMC\n"
 		  "was detected and it could interfere with accessing flash memory. Flashrom will\n"
 		  "try to disable it temporarily but even then this might not be safe:\n"
@@ -598,39 +599,36 @@ static const struct spi_master spi_master_sb600 = {
 	.max_data_read	= FIFO_SIZE_OLD,
 	.max_data_write	= FIFO_SIZE_OLD - 3,
 	.command	= sb600_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
+	.map_flash_region	= physmap,
+	.unmap_flash_region	= physunmap,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
 	.shutdown	= sb600spi_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static const struct spi_master spi_master_yangtze = {
 	.max_data_read	= FIFO_SIZE_YANGTZE - 3, /* Apparently the big SPI 100 buffer is not a ring buffer. */
 	.max_data_write	= FIFO_SIZE_YANGTZE - 3,
 	.command	= spi100_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
+	.map_flash_region	= physmap,
+	.unmap_flash_region	= physunmap,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
 	.shutdown	= sb600spi_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static const struct spi_master spi_master_promontory = {
 	.max_data_read	= MAX_DATA_READ_UNLIMITED,
 	.max_data_write	= FIFO_SIZE_YANGTZE - 3,
 	.command	= spi100_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
+	.map_flash_region	= physmap,
+	.unmap_flash_region	= physunmap,
 	.read		= promontory_read_memmapped,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
 	.shutdown	= sb600spi_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
-int sb600_probe_spi(struct pci_dev *dev)
+int sb600_probe_spi(const struct programmer_cfg *cfg, struct pci_dev *dev)
 {
 	struct pci_dev *smbus_dev;
 	uint32_t tmp;
@@ -640,7 +638,7 @@ int sb600_probe_spi(struct pci_dev *dev)
 	/* Read SPI_BaseAddr */
 	tmp = pci_read_long(dev, 0xa0);
 	tmp &= 0xffffffe0;	/* remove bits 4-0 (reserved) */
-	msg_pdbg("SPI base address is at 0x%x\n", tmp);
+	msg_pdbg("SPI base address is at 0x%"PRIx32"\n", tmp);
 
 	/* If the BAR has address 0, it is unlikely SPI is used. */
 	if (!tmp)
@@ -649,7 +647,7 @@ int sb600_probe_spi(struct pci_dev *dev)
 	/* Physical memory has to be mapped at page (4k) boundaries. */
 	sb600_spibar = rphysmap("SB600 SPI registers", tmp & 0xfffff000, 0x1000);
 	if (sb600_spibar == ERROR_PTR)
-		return ERROR_FATAL;
+		return ERROR_FLASHROM_FATAL;
 
 	/* The low bits of the SPI base address are used as offset into
 	 * the mapped page.
@@ -658,7 +656,7 @@ int sb600_probe_spi(struct pci_dev *dev)
 
 	enum amd_chipset amd_gen = determine_generation(dev);
 	if (amd_gen == CHIPSET_AMD_UNKNOWN)
-		return ERROR_NONFATAL;
+		return ERROR_FLASHROM_NONFATAL;
 
 	/* How to read the following table and similar ones in this file:
 	 * "?" means we have no datasheet for this chipset generation or it doesn't have any relevant info.
@@ -678,14 +676,14 @@ int sb600_probe_spi(struct pci_dev *dev)
 	 */
 	if (amd_gen >= CHIPSET_SB7XX) {
 		tmp = pci_read_long(dev, 0xa0);
-		msg_pdbg("SpiRomEnable=%i", (tmp >> 1) & 0x1);
+		msg_pdbg("SpiRomEnable=%"PRIi32"", (tmp >> 1) & 0x1);
 		if (amd_gen == CHIPSET_SB7XX)
-			msg_pdbg(", AltSpiCSEnable=%i, AbortEnable=%i", tmp & 0x1, (tmp >> 2) & 0x1);
+			msg_pdbg(", AltSpiCSEnable=%"PRIi32", AbortEnable=%"PRIi32"", tmp & 0x1, (tmp >> 2) & 0x1);
 		else if (amd_gen >= CHIPSET_YANGTZE)
-			msg_pdbg(", RouteTpm2Sp=%i", (tmp >> 3) & 0x1);
+			msg_pdbg(", RouteTpm2Sp=%"PRIi32"", (tmp >> 3) & 0x1);
 
 		tmp = pci_read_byte(dev, 0xba);
-		msg_pdbg(", PrefetchEnSPIFromIMC=%i", (tmp & 0x4) >> 2);
+		msg_pdbg(", PrefetchEnSPIFromIMC=%"PRIi32"", (tmp & 0x4) >> 2);
 
 		tmp = pci_read_byte(dev, 0xbb);
 		/* FIXME: Set bit 3,6,7 if not already set.
@@ -693,8 +691,8 @@ int sb600_probe_spi(struct pci_dev *dev)
 		 * See doc 42413 AMD SB700/710/750 RPR.
 		 */
 		if (amd_gen == CHIPSET_SB7XX)
-			msg_pdbg(", SpiOpEnInLpcMode=%i", (tmp >> 5) & 0x1);
-		msg_pdbg(", PrefetchEnSPIFromHost=%i\n", tmp & 0x1);
+			msg_pdbg(", SpiOpEnInLpcMode=%"PRIi32"", (tmp >> 5) & 0x1);
+		msg_pdbg(", PrefetchEnSPIFromHost=%"PRIi32"\n", tmp & 0x1);
 	}
 
 	/* Chipset support matrix for SPI_Cntrl0 (spibar + 0x0)
@@ -716,37 +714,37 @@ int sb600_probe_spi(struct pci_dev *dev)
 	 *  <1> see handle_speed
 	 */
 	tmp = mmio_readl(sb600_spibar + 0x00);
-	msg_pdbg("(0x%08" PRIx32 ") SpiArbEnable=%i", tmp, (tmp >> 19) & 0x1);
+	msg_pdbg("(0x%08" PRIx32 ") SpiArbEnable=%"PRIi32"", tmp, (tmp >> 19) & 0x1);
 	if (amd_gen >= CHIPSET_YANGTZE)
-		msg_pdbg(", IllegalAccess=%i", (tmp >> 21) & 0x1);
+		msg_pdbg(", IllegalAccess=%"PRIi32"", (tmp >> 21) & 0x1);
 
-	msg_pdbg(", SpiAccessMacRomEn=%i, SpiHostAccessRomEn=%i, ArbWaitCount=%i",
+	msg_pdbg(", SpiAccessMacRomEn=%"PRIi32", SpiHostAccessRomEn=%"PRIi32", ArbWaitCount=%"PRIi32"",
 		 (tmp >> 22) & 0x1, (tmp >> 23) & 0x1, (tmp >> 24) & 0x7);
 
 	if (amd_gen < CHIPSET_YANGTZE)
-		msg_pdbg(", SpiBridgeDisable=%i", (tmp >> 27) & 0x1);
+		msg_pdbg(", SpiBridgeDisable=%"PRIi32"", (tmp >> 27) & 0x1);
 
 	switch (amd_gen) {
 	case CHIPSET_SB7XX:
-		msg_pdbg(", DropOneClkOnRd/SpiClkGate=%i", (tmp >> 28) & 0x1);
+		msg_pdbg(", DropOneClkOnRd/SpiClkGate=%"PRIi32"", (tmp >> 28) & 0x1);
 		/* Fall through. */
 	case CHIPSET_SB89XX:
 	case CHIPSET_HUDSON234:
 	case CHIPSET_YANGTZE:
 	case CHIPSET_PROMONTORY:
-		msg_pdbg(", SpiBusy=%i", (tmp >> 31) & 0x1);
+		msg_pdbg(", SpiBusy=%"PRIi32"", (tmp >> 31) & 0x1);
 	default: break;
 	}
 	msg_pdbg("\n");
 
 	if (((tmp >> 22) & 0x1) == 0 || ((tmp >> 23) & 0x1) == 0) {
 		msg_perr("ERROR: State of SpiAccessMacRomEn or SpiHostAccessRomEn prohibits full access.\n");
-		return ERROR_NONFATAL;
+		return ERROR_FLASHROM_NONFATAL;
 	}
 
 	if (amd_gen >= CHIPSET_SB89XX) {
 		tmp = mmio_readb(sb600_spibar + 0x1D);
-		msg_pdbg("Using SPI_CS%d\n", tmp & 0x3);
+		msg_pdbg("Using SPI_CS%"PRId32"\n", tmp & 0x3);
 		/* FIXME: Handle SpiProtect* configuration on Yangtze. */
 	}
 
@@ -758,7 +756,7 @@ int sb600_probe_spi(struct pci_dev *dev)
 		smbus_dev = pcidev_find(0x1022, 0x790b); /* AMD FP4 */
 	if (!smbus_dev) {
 		msg_perr("ERROR: SMBus device not found. Not enabling SPI.\n");
-		return ERROR_NONFATAL;
+		return ERROR_FLASHROM_NONFATAL;
 	}
 
 	/* Note about the bit tests below: If a bit is zero, the GPIO is SPI. */
@@ -790,11 +788,11 @@ int sb600_probe_spi(struct pci_dev *dev)
 		return 0;
 	}
 
-	if (handle_speed(dev, amd_gen, sb600_spibar) != 0)
-		return ERROR_FATAL;
+	if (handle_speed(cfg, dev, amd_gen, sb600_spibar) != 0)
+		return ERROR_FLASHROM_FATAL;
 
-	if (handle_imc(dev, amd_gen) != 0)
-		return ERROR_FATAL;
+	if (handle_imc(cfg, dev, amd_gen) != 0)
+		return ERROR_FLASHROM_FATAL;
 
 	struct sb600spi_data *data = calloc(1, sizeof(*data));
 	if (!data) {

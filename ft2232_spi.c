@@ -14,6 +14,7 @@
  * GNU General Public License for more details.
  */
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <strings.h>
 #include <string.h>
@@ -294,17 +295,14 @@ static const struct spi_master spi_master_ft2232 = {
 	.features	= SPI_MASTER_4BA,
 	.max_data_read	= 64 * 1024,
 	.max_data_write	= 256,
-	.command	= default_spi_send_command,
 	.multicommand	= ft2232_spi_send_multicommand,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
 	.shutdown	= ft2232_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
 /* Returns 0 upon success, a negative number upon errors. */
-static int ft2232_spi_init(void)
+static int ft2232_spi_init(const struct programmer_cfg *cfg)
 {
 	int ret = 0;
 	unsigned char buf[512];
@@ -317,7 +315,7 @@ static int ft2232_spi_init(void)
 	 * but the non-H chips can only run at 12 MHz. We disable the divide-by-5
 	 * prescaler on 'H' chips so they run at 60MHz.
 	 */
-	uint8_t clock_5x = 1;
+	bool clock_5x = true;
 	/* In addition to the prescaler mentioned above there is also another
 	 * configurable one on all versions of the chips. Its divisor div can be
 	 * set by a 16 bit value x according to the following formula:
@@ -340,7 +338,7 @@ static int ft2232_spi_init(void)
 	struct ftdi_context ftdic;
 	struct ft2232_data *spi_data;
 
-	arg = extract_programmer_param_str("type");
+	arg = extract_programmer_param_str(cfg, "type");
 	if (arg) {
 		if (!strcasecmp(arg, "2232H")) {
 			ft2232_type = FTDI_FT2232H_PID;
@@ -447,7 +445,7 @@ static int ft2232_spi_init(void)
 	/* Remember reserved pins before pindir gets modified. */
 	const uint8_t rsv_bits = pindir & 0xf0;
 
-	arg = extract_programmer_param_str("port");
+	arg = extract_programmer_param_str(cfg, "port");
 	if (arg) {
 		switch (toupper((unsigned char)*arg)) {
 		case 'A':
@@ -480,7 +478,7 @@ static int ft2232_spi_init(void)
 	}
 	free(arg);
 
-	arg = extract_programmer_param_str("divisor");
+	arg = extract_programmer_param_str(cfg, "divisor");
 	if (arg && strlen(arg)) {
 		unsigned int temp = 0;
 		char *endptr;
@@ -496,7 +494,7 @@ static int ft2232_spi_init(void)
 	free(arg);
 
 	bool csgpiol_set = false;
-	arg = extract_programmer_param_str("csgpiol");
+	arg = extract_programmer_param_str(cfg, "csgpiol");
 	if (arg) {
 		csgpiol_set = true;
 		msg_pwarn("Deprecation warning: `csgpiol` is deprecated and will be removed "
@@ -529,7 +527,7 @@ static int ft2232_spi_init(void)
 	for (int pin = 0; pin < 4; pin++) {
 		char gpiol_param[7];
 		snprintf(gpiol_param, sizeof(gpiol_param), "gpiol%d", pin);
-		arg = extract_programmer_param_str(gpiol_param);
+		arg = extract_programmer_param_str(cfg, gpiol_param);
 
 		if (!arg)
 			continue;
@@ -602,8 +600,8 @@ format_error:
 		msg_perr("Unable to select channel (%s).\n", ftdi_get_error_string(&ftdic));
 	}
 
-	arg = extract_programmer_param_str("serial");
-	arg2 = extract_programmer_param_str("description");
+	arg = extract_programmer_param_str(cfg, "serial");
+	arg2 = extract_programmer_param_str(cfg, "description");
 
 	f = ftdi_usb_open_desc(&ftdic, ft2232_vid, ft2232_type, arg2, arg);
 
@@ -618,7 +616,7 @@ format_error:
 
 	if (ftdic.type != TYPE_2232H && ftdic.type != TYPE_4232H && ftdic.type != TYPE_232H) {
 		msg_pdbg("FTDI chip type %d is not high-speed.\n", ftdic.type);
-		clock_5x = 0;
+		clock_5x = false;
 	}
 
 	if (ftdi_usb_reset(&ftdic) < 0) {
@@ -710,7 +708,4 @@ const struct programmer_entry programmer_ft2232_spi = {
 	.type			= USB,
 	.devs.dev		= devs_ft2232spi,
 	.init			= ft2232_spi_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

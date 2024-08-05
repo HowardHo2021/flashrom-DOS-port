@@ -25,7 +25,7 @@
 #ifndef _USB_UNITTESTS_H_
 #define _USB_UNITTESTS_H_
 
-#if CONFIG_RAIDEN_DEBUG_SPI == 1 || CONFIG_DEDIPROG == 1
+#if CONFIG_RAIDEN_DEBUG_SPI == 1 || CONFIG_DEDIPROG == 1 || CONFIG_CH341A_SPI == 1
 
 #include <libusb.h>
 
@@ -54,6 +54,8 @@ typedef struct libusb_interface_descriptor libusb_interface_descriptor;
 
 struct libusb_endpoint_descriptor;
 typedef struct libusb_endpoint_descriptor libusb_endpoint_descriptor;
+
+struct libusb_transfer;
 
 #endif
 

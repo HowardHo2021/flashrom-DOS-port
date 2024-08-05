@@ -31,7 +31,9 @@
 #define DRKAISER_MEMMAP_MASK		((1 << 17) - 1)
 
 struct drkaiser_data {
+	struct pci_dev *dev;
 	uint8_t *bar;
+	uint16_t flash_access;
 };
 
 static const struct dev_entry drkaiser_pcidev[] = {
@@ -58,38 +60,34 @@ static uint8_t drkaiser_chip_readb(const struct flashctx *flash,
 
 static int drkaiser_shutdown(void *par_data)
 {
+	struct drkaiser_data *data = par_data;
+
+	/* Restore original flash writing state. */
+	pci_write_word(data->dev, PCI_MAGIC_DRKAISER_ADDR, data->flash_access);
+
 	free(par_data);
 	return 0;
 }
 
 static const struct par_master par_master_drkaiser = {
 	.chip_readb	= drkaiser_chip_readb,
-	.chip_readw	= fallback_chip_readw,
-	.chip_readl	= fallback_chip_readl,
-	.chip_readn	= fallback_chip_readn,
 	.chip_writeb	= drkaiser_chip_writeb,
-	.chip_writew	= fallback_chip_writew,
-	.chip_writel	= fallback_chip_writel,
-	.chip_writen	= fallback_chip_writen,
 	.shutdown	= drkaiser_shutdown,
 };
 
-static int drkaiser_init(void)
+static int drkaiser_init(const struct programmer_cfg *cfg)
 {
 	struct pci_dev *dev = NULL;
 	uint32_t addr;
 	uint8_t *bar;
 
-	dev = pcidev_init(drkaiser_pcidev, PCI_BASE_ADDRESS_2);
+	dev = pcidev_init(cfg, drkaiser_pcidev, PCI_BASE_ADDRESS_2);
 	if (!dev)
 		return 1;
 
 	addr = pcidev_readbar(dev, PCI_BASE_ADDRESS_2);
 	if (!addr)
 		return 1;
-
-	/* Write magic register to enable flash write. */
-	rpci_write_word(dev, PCI_MAGIC_DRKAISER_ADDR, PCI_MAGIC_DRKAISER_VALUE);
 
 	/* Map 128kB flash memory window. */
 	bar = rphysmap("Dr. Kaiser PC-Waechter flash memory", addr, DRKAISER_MEMMAP_SIZE);
@@ -101,7 +99,12 @@ static int drkaiser_init(void)
 		msg_perr("Unable to allocate space for PAR master data\n");
 		return 1;
 	}
+	data->dev = dev;
 	data->bar = bar;
+
+	/* Write magic register to enable flash write. */
+	data->flash_access = pci_read_word(dev, PCI_MAGIC_DRKAISER_ADDR);
+	pci_write_word(dev, PCI_MAGIC_DRKAISER_ADDR, PCI_MAGIC_DRKAISER_VALUE);
 
 	max_rom_decode.parallel = 128 * 1024;
 
@@ -113,7 +116,4 @@ const struct programmer_entry programmer_drkaiser = {
 	.type			= PCI,
 	.devs.dev		= drkaiser_pcidev,
 	.init			= drkaiser_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

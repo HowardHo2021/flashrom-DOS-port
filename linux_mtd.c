@@ -17,6 +17,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <mtd/mtd-user.h>
@@ -33,8 +34,8 @@
 
 struct linux_mtd_data {
 	FILE *dev_fp;
-	int device_is_writeable;
-	int no_erase;
+	bool device_is_writeable;
+	bool no_erase;
 	/* Size info is presented in bytes in sysfs. */
 	unsigned long int total_size;
 	unsigned long int numeraseregions;
@@ -130,10 +131,10 @@ static int get_mtd_info(const char *sysfs_path, struct linux_mtd_data *data)
 		return 1;
 	if (tmp & MTD_WRITEABLE) {
 		/* cache for later use by write function */
-		data->device_is_writeable = 1;
+		data->device_is_writeable = true;
 	}
 	if (tmp & MTD_NO_ERASE) {
-		data->no_erase = 1;
+		data->no_erase = true;
 	}
 
 	/* Device name */
@@ -178,7 +179,7 @@ static int linux_mtd_probe(struct flashctx *flash)
 
 	if (data->no_erase)
 		flash->chip->feature_bits |= FEATURE_NO_ERASE;
-	flash->chip->tested = TEST_OK_PREW;
+	flash->chip->tested = TEST_OK_PREWB;
 	flash->chip->total_size = data->total_size / 1024;	/* bytes -> kB */
 	flash->chip->block_erasers[0].eraseblocks[0].size = data->erasesize;
 	flash->chip->block_erasers[0].eraseblocks[0].count =
@@ -428,6 +429,14 @@ static enum flashrom_wp_result linux_mtd_wp_get_available_ranges(struct flashrom
 	return FLASHROM_WP_ERR_RANGE_LIST_UNAVAILABLE;
 }
 
+static void linux_mtd_nop_delay(const struct flashctx *flash, unsigned int usecs)
+{
+	/*
+	 * Ignore delay requests. The Linux MTD framework brokers all flash
+	 * protocol, including timing, resets, etc.
+	 */
+}
+
 static const struct opaque_master linux_mtd_opaque_master = {
 	/* max_data_{read,write} don't have any effect for this programmer */
 	.max_data_read	= MAX_DATA_UNSPECIFIED,
@@ -440,6 +449,7 @@ static const struct opaque_master linux_mtd_opaque_master = {
 	.wp_read_cfg	= linux_mtd_wp_read_cfg,
 	.wp_write_cfg	= linux_mtd_wp_write_cfg,
 	.wp_get_ranges	= linux_mtd_wp_get_available_ranges,
+	.delay		= linux_mtd_nop_delay,
 };
 
 /* Returns 0 if setup is successful, non-zero to indicate error */
@@ -493,22 +503,22 @@ linux_mtd_setup_exit:
 	return ret;
 }
 
-static int linux_mtd_init(void)
+static int linux_mtd_init(const struct programmer_cfg *cfg)
 {
-	char *param;
+	char *param_str;
 	int dev_num = 0;
 	int ret = 1;
 	struct linux_mtd_data *data = NULL;
 
-	param = extract_programmer_param_str("dev");
-	if (param) {
+	param_str = extract_programmer_param_str(cfg, "dev");
+	if (param_str) {
 		char *endptr;
 
-		dev_num = strtol(param, &endptr, 0);
+		dev_num = strtol(param_str, &endptr, 0);
 		if ((*endptr != '\0') || (dev_num < 0)) {
 			msg_perr("Invalid device number %s. Use flashrom -p "
 				"linux_mtd:dev=N where N is a valid MTD\n"
-				"device number.\n", param);
+				"device number.\n", param_str);
 			goto linux_mtd_init_exit;
 		}
 	}
@@ -524,13 +534,13 @@ static int linux_mtd_init(void)
 
 	struct stat s;
 	if (stat(sysfs_path, &s) < 0) {
-		if (param)
+		if (param_str)
 			msg_perr("%s does not exist\n", sysfs_path);
 		else
 			msg_pdbg("%s does not exist\n", sysfs_path);
 		goto linux_mtd_init_exit;
 	}
-	free(param);
+	free(param_str);
 
 	data = calloc(1, sizeof(*data));
 	if (!data) {
@@ -547,7 +557,7 @@ static int linux_mtd_init(void)
 	return register_opaque_master(&linux_mtd_opaque_master, data);
 
 linux_mtd_init_exit:
-	free(param);
+	free(param_str);
 	return ret;
 }
 
@@ -556,7 +566,4 @@ const struct programmer_entry programmer_linux_mtd = {
 	.type			= OTHER,
 	.devs.note		= "Device files /dev/mtd*\n",
 	.init			= linux_mtd_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

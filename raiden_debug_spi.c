@@ -343,13 +343,18 @@
 #include "usb_device.h"
 
 #include <libusb.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-/* FIXME: Add some programmer IDs here */
+/*
+ * Table is empty as raiden_debug_spi matches against the class and
+ * subclass of the connected USB devices, rather than looking for a
+ * device with a specific vid:pid.
+ */
 static const struct dev_entry devs_raiden[] = {
 	{0},
 };
@@ -887,7 +892,7 @@ static int send_command_v1(const struct flashctx *flash,
 				/* Reattempting will not result in a recovery. */
 				return status;
 			}
-			programmer_delay(RETRY_INTERVAL_US);
+			default_delay(RETRY_INTERVAL_US);
 			continue;
 		}
 
@@ -922,7 +927,7 @@ static int send_command_v1(const struct flashctx *flash,
 				/* Reattempting will not result in a recovery. */
 				return status;
 			}
-			programmer_delay(RETRY_INTERVAL_US);
+			default_delay(RETRY_INTERVAL_US);
 		}
 	}
 
@@ -957,7 +962,7 @@ static int get_spi_config_v2(struct raiden_debug_spi_data *ctx_data)
 			         "    config attempt = %d\n"
 			         "    status         = 0x%05x\n",
 			         config_attempt + 1, status);
-			programmer_delay(RETRY_INTERVAL_US);
+			default_delay(RETRY_INTERVAL_US);
 			continue;
 		}
 
@@ -967,7 +972,7 @@ static int get_spi_config_v2(struct raiden_debug_spi_data *ctx_data)
 			         "    config attempt = %d\n"
 			         "    status         = 0x%05x\n",
 			         config_attempt + 1, status);
-			programmer_delay(RETRY_INTERVAL_US);
+			default_delay(RETRY_INTERVAL_US);
 			continue;
 		}
 
@@ -1011,7 +1016,7 @@ static int get_spi_config_v2(struct raiden_debug_spi_data *ctx_data)
 		         config_attempt + 1,
 		         rsp_config.packet_v2.packet_id,
 		         rsp_config.packet_size);
-		programmer_delay(RETRY_INTERVAL_US);
+		default_delay(RETRY_INTERVAL_US);
 	}
 	return USB_SPI_HOST_INIT_FAILURE;
 }
@@ -1235,7 +1240,7 @@ static int send_command_v2(const struct flashctx *flash,
 				/* Reattempting will not result in a recovery. */
 				return status;
 			}
-			programmer_delay(RETRY_INTERVAL_US);
+			default_delay(RETRY_INTERVAL_US);
 			continue;
 		}
 		for (read_attempt = 0; read_attempt < READ_RETRY_ATTEMPTS;
@@ -1272,7 +1277,7 @@ static int send_command_v2(const struct flashctx *flash,
 				}
 				/* Device needs to reset its transmit index. */
 				restart_response_v2(ctx_data);
-				programmer_delay(RETRY_INTERVAL_US);
+				default_delay(RETRY_INTERVAL_US);
 			}
 		}
 	}
@@ -1315,12 +1320,9 @@ static const struct spi_master spi_master_raiden_debug = {
 	.max_data_read	= 0,
 	.max_data_write	= 0,
 	.command	= NULL,
-	.multicommand	= default_spi_send_multicommand,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
 	.shutdown	= raiden_debug_spi_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
 static int match_endpoint(struct libusb_endpoint_descriptor const *descriptor,
@@ -1429,10 +1431,10 @@ static int configure_protocol(struct raiden_debug_spi_data *ctx_data)
 	return 0;
 }
 
-static int get_ap_request_type(void)
+static int get_ap_request_type(const struct programmer_cfg *cfg)
 {
 	int ap_request = RAIDEN_DEBUG_SPI_REQ_ENABLE_AP;
-	char *custom_rst_str = extract_programmer_param_str("custom_rst");
+	char *custom_rst_str = extract_programmer_param_str(cfg, "custom_rst");
 	if (custom_rst_str) {
 		if (!strcasecmp(custom_rst_str, "true")) {
 			ap_request = RAIDEN_DEBUG_SPI_REQ_ENABLE_AP_CUSTOM;
@@ -1448,29 +1450,43 @@ static int get_ap_request_type(void)
 	return ap_request;
 }
 
-static int get_target(void)
+static int decode_programmer_param(const struct programmer_cfg *cfg, uint8_t *request,
+                                   uint16_t *request_parameter)
 {
 	/**
 	 * REQ_ENABLE doesn't specify a target bus, and will be rejected
 	 * by adapters that support more than one target.
 	 */
-	int request_enable = RAIDEN_DEBUG_SPI_REQ_ENABLE;
+	uint8_t request_enable = RAIDEN_DEBUG_SPI_REQ_ENABLE;
+        uint16_t parameter = 0;
+        int ret = 0;
 
-	char *target_str = extract_programmer_param_str("target");
+	char *target_str = extract_programmer_param_str(cfg, "target");
+        printf("FISK: %s\n", target_str);
+
 	if (target_str) {
-		if (!strcasecmp(target_str, "ap"))
-			request_enable = get_ap_request_type();
+		char *endptr;
+		int index = strtol(target_str, &endptr, 0);
+		if (*target_str && !*endptr && index >= 0 && index < 256) {
+			request_enable = RAIDEN_DEBUG_SPI_REQ_ENABLE;
+                        parameter = index;
+		} else if (!strcasecmp(target_str, "ap"))
+			request_enable = get_ap_request_type(cfg);
 		else if (!strcasecmp(target_str, "ec"))
 			request_enable = RAIDEN_DEBUG_SPI_REQ_ENABLE_EC;
 		else {
 			msg_perr("Invalid target: %s\n", target_str);
-			request_enable = -1;
+			ret = 1;
 		}
 	}
 	free(target_str);
-	msg_pinfo("Raiden target: %d\n", request_enable);
+	if (ret == 0) {
+		msg_pinfo("Raiden target: %d,%d\n", request_enable, parameter);
 
-	return request_enable;
+                *request = request_enable;
+                *request_parameter = parameter;
+        }
+        return ret;
 }
 
 static void free_dev_list(struct usb_device **dev_lst)
@@ -1482,22 +1498,24 @@ static void free_dev_list(struct usb_device **dev_lst)
 		dev = usb_device_free(dev);
 }
 
-static int raiden_debug_spi_init(void)
+static int raiden_debug_spi_init(const struct programmer_cfg *cfg)
 {
 	struct usb_match match;
-	char *serial = extract_programmer_param_str("serial");
+	char *serial = extract_programmer_param_str(cfg, "serial");
 	struct usb_device *current;
 	struct usb_device *device = NULL;
-	int found = 0;
+	bool found = false;
 	int ret;
 
-	int request_enable = get_target();
-	if (request_enable < 0) {
+	uint8_t request_enable;
+        uint16_t request_parameter;
+        ret = decode_programmer_param(cfg, &request_enable, &request_parameter);
+	if (ret != 0) {
 		free(serial);
-		return 1;
+		return ret;
 	}
 
-	usb_match_init(&match);
+	usb_match_init(cfg, &match);
 
 	usb_match_value_default(&match.vid,      GOOGLE_VID);
 	usb_match_value_default(&match.class,    LIBUSB_CLASS_VENDOR_SPEC);
@@ -1535,7 +1553,7 @@ static int raiden_debug_spi_init(void)
 		}
 
 		if (!serial) {
-			found = 1;
+			found = true;
 			goto loop_end;
 		} else {
 			unsigned char dev_serial[32] = { 0 };
@@ -1560,7 +1578,7 @@ static int raiden_debug_spi_init(void)
 				} else {
 					msg_pinfo("Raiden: Serial number %s matched device", serial);
 					usb_device_show(" ", current);
-					found = 1;
+					found = true;
 				}
 			}
 		}
@@ -1586,7 +1604,7 @@ loop_end:
 				LIBUSB_REQUEST_TYPE_VENDOR |
 				LIBUSB_RECIPIENT_INTERFACE,
 				request_enable,
-				0,
+				request_parameter,
 				device->interface_descriptor->bInterfaceNumber,
 				NULL,
 				0,
@@ -1648,7 +1666,4 @@ const struct programmer_entry programmer_raiden_debug_spi = {
 	.type			= USB,
 	.devs.dev		= devs_raiden,
 	.init			= raiden_debug_spi_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

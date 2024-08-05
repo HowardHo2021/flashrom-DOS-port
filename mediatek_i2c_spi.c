@@ -456,21 +456,18 @@ static const struct spi_master spi_master_i2c_mediatek = {
 	// Leave room for 1-byte command and up to a 4-byte address.
 	.max_data_write	= I2C_SMBUS_BLOCK_MAX - 5,
 	.command	= mediatek_send_command,
-	.multicommand	= default_spi_send_multicommand,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
 	.shutdown	= mediatek_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
-static int get_params(bool *allow_brick)
+static int get_params(const struct programmer_cfg *cfg, bool *allow_brick)
 {
 	char *brick_str = NULL;
 	int ret = 0;
 
 	*allow_brick = false; /* Default behaviour is to bail. */
-	brick_str = extract_programmer_param_str("allow_brick");
+	brick_str = extract_programmer_param_str(cfg, "allow_brick");
 	if (brick_str) {
 		if (!strcmp(brick_str, "yes")) {
 			*allow_brick = true;
@@ -484,12 +481,12 @@ static int get_params(bool *allow_brick)
 	return ret;
 }
 
-static int mediatek_init(void)
+static int mediatek_init(const struct programmer_cfg *cfg)
 {
 	int ret;
 	bool allow_brick;
 
-	if (get_params(&allow_brick))
+	if (get_params(cfg, &allow_brick))
 		return SPI_GENERIC_ERROR;
 
 	/*
@@ -504,7 +501,7 @@ static int mediatek_init(void)
 		return SPI_GENERIC_ERROR;
 	}
 
-	int fd = i2c_open_from_programmer_params(ISP_PORT, 0);
+	int fd = i2c_open_from_programmer_params(cfg, ISP_PORT, 0);
 	if (fd < 0) {
 		msg_perr("Failed to open i2c\n");
 		return fd;
@@ -542,7 +539,4 @@ const struct programmer_entry programmer_mediatek_i2c_spi = {
 	.type			= OTHER,
 	.devs.note		= "Device files /dev/i2c-*\n",
 	.init			= mediatek_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

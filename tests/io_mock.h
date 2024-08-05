@@ -31,10 +31,16 @@
 #ifndef _IO_MOCK_H_
 #define _IO_MOCK_H_
 
+#include <include/test.h>
+
 /* Required for `FILE *` */
 #include <stdio.h>
 
 #include <stdint.h>
+
+/* Required for struct timeval and mode_t */
+#include <sys/types.h>
+#include <sys/time.h>
 
 #include "usb_unittests.h"
 
@@ -46,11 +52,6 @@ struct pci_dev {
 	char padding[18];
 	unsigned int device_id;
 };
-
-/* POSIX open() flags, avoiding dependency on fcntl.h */
-#define O_RDONLY 0
-#define O_WRONLY 1
-#define O_RDWR 2
 
 /* Linux I2C interface constants, avoiding linux/i2c-dev.h */
 #define I2C_SLAVE 0x0703
@@ -99,19 +100,25 @@ struct io_mock {
 						uint8_t config_index,
 						struct libusb_config_descriptor **);
 	void (*libusb_free_config_descriptor)(void *state, struct libusb_config_descriptor *);
+	struct libusb_transfer* (*libusb_alloc_transfer)(void *state, int iso_packets);
+	int (*libusb_submit_transfer)(void *state, struct libusb_transfer *transfer);
+	void (*libusb_free_transfer)(void *state, struct libusb_transfer *transfer);
+	int (*libusb_handle_events_timeout)(void *state, libusb_context *ctx, struct timeval *tv);
 
 	/* POSIX File I/O */
-	int (*open)(void *state, const char *pathname, int flags);
-	int (*ioctl)(void *state, int fd, unsigned long request, va_list args);
-	int (*read)(void *state, int fd, void *buf, size_t sz);
-	int (*write)(void *state, int fd, const void *buf, size_t sz);
+	int (*iom_open)(void *state, const char *pathname, int flags, mode_t mode);
+	int (*iom_ioctl)(void *state, int fd, unsigned long request, va_list args);
+	int (*iom_read)(void *state, int fd, void *buf, size_t sz);
+	int (*iom_write)(void *state, int fd, const void *buf, size_t sz);
 
 	/* Standard I/O */
-	FILE* (*fopen)(void *state, const char *pathname, const char *mode);
-	char* (*fgets)(void *state, char *buf, int len, FILE *fp);
-	size_t (*fread)(void *state, void *buf, size_t size, size_t len, FILE *fp);
-	int (*fprintf)(void *state, FILE *fp, const char *fmt, va_list args);
-	int (*fclose)(void *state, FILE *fp);
+	FILE* (*iom_fopen)(void *state, const char *pathname, const char *mode);
+	char* (*iom_fgets)(void *state, char *buf, int len, FILE *fp);
+	size_t (*iom_fread)(void *state, void *buf, size_t size, size_t len, FILE *fp);
+	size_t (*iom_fwrite)(void *state, const void *buf, size_t size, size_t len, FILE *fp);
+	int (*iom_fprintf)(void *state, FILE *fp, const char *fmt, va_list args);
+	int (*iom_fclose)(void *state, FILE *fp);
+	FILE *(*iom_fdopen)(void *state, int fd, const char *mode);
 
 	/*
 	 * An alternative to custom open mock. A test can either register its

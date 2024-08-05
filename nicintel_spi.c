@@ -285,11 +285,11 @@ static int nicintel_spi_i210_enable_flash(struct nicintel_spi_data *data)
 	return 0;
 }
 
-static int nicintel_spi_init(void)
+static int nicintel_spi_init(const struct programmer_cfg *cfg)
 {
 	struct pci_dev *dev = NULL;
 
-	dev = pcidev_init(nics_intel_spi, PCI_BASE_ADDRESS_0);
+	dev = pcidev_init(cfg, nics_intel_spi, PCI_BASE_ADDRESS_0);
 	if (!dev)
 		return 1;
 
@@ -337,7 +337,4 @@ const struct programmer_entry programmer_nicintel_spi = {
 	.type			= PCI,
 	.devs.dev		= nics_intel_spi,
 	.init			= nicintel_spi_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

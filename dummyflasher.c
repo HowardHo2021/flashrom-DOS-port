@@ -15,6 +15,7 @@
 
 #include <assert.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
@@ -48,8 +49,8 @@ struct emu_data {
 	 *       WRSR code on enabling WRSR_EXT2 for more chips. */
 	bool emu_wrsr_ext2;
 	bool emu_wrsr_ext3;
-	int erase_to_zero;
-	int emu_modified;	/* is the image modified since reading it? */
+	bool erase_to_zero;
+	bool emu_modified;	/* is the image modified since reading it? */
 	uint8_t emu_status[3];
 	uint8_t emu_status_len;	/* number of emulated status registers */
 	/* If "freq" parameter is passed in from command line, commands will delay
@@ -74,6 +75,10 @@ struct emu_data {
 
 	unsigned int spi_write_256_chunksize;
 	uint8_t *flashchip_contents;
+
+	/* An instance of this structure is shared between multiple masters, so
+	 * store the number of references to clean up only once at shutdown time. */
+	uint8_t refs_cnt;
 };
 
 /* A legit complete SFDP table based on the MX25L6436E (rev. 1.8) datasheet. */
@@ -121,10 +126,10 @@ static int dummy_spi_write_256(struct flashctx *flash, const uint8_t *buf, unsig
 				 emu_data->spi_write_256_chunksize);
 }
 
-static bool dummy_spi_probe_opcode(struct flashctx *flash, uint8_t opcode)
+static bool dummy_spi_probe_opcode(const struct flashctx *flash, uint8_t opcode)
 {
 	size_t i;
-	struct emu_data *emu_data = flash->mst->spi.data;
+	const struct emu_data *emu_data = flash->mst->spi.data;
 	for (i = 0; i < emu_data->spi_blacklist_size; i++) {
 		if (emu_data->spi_blacklist[i] == opcode)
 			return false;
@@ -144,7 +149,7 @@ static int probe_variable_size(struct flashctx *flash)
 	msg_cdbg("%s: set flash->total_size to %dK bytes.\n", __func__,
 	         flash->chip->total_size);
 
-	flash->chip->tested = TEST_OK_PREW;
+	flash->chip->tested = TEST_OK_PREWB;
 
 	if (emu_data->erase_to_zero)
 		flash->chip->feature_bits |= FEATURE_ERASED_ZERO;
@@ -183,7 +188,7 @@ static int dummy_opaque_write(struct flashctx *flash, const uint8_t *buf, unsign
 	struct emu_data *emu_data = flash->mst->opaque.data;
 
 	memcpy(emu_data->flashchip_contents + start, buf, len);
-	emu_data->emu_modified = 1;
+	emu_data->emu_modified = true;
 
 	return 0;
 }
@@ -193,7 +198,7 @@ static int dummy_opaque_erase(struct flashctx *flash, unsigned int blockaddr, un
 	struct emu_data *emu_data = flash->mst->opaque.data;
 
 	memset(emu_data->flashchip_contents + blockaddr, emu_data->erase_to_zero ? 0x00 : 0xff, blocklen);
-	emu_data->emu_modified = 1;
+	emu_data->emu_modified = true;
 
 	return 0;
 }
@@ -210,7 +215,7 @@ static void dummy_chip_writew(const struct flashctx *flash, uint16_t val, chipad
 
 static void dummy_chip_writel(const struct flashctx *flash, uint32_t val, chipaddr addr)
 {
-	msg_pspew("%s: addr=0x%" PRIxPTR ", val=0x%08x\n", __func__, addr, val);
+	msg_pspew("%s: addr=0x%" PRIxPTR ", val=0x%08"PRIx32"\n", __func__, addr, val);
 }
 
 static void dummy_chip_writen(const struct flashctx *flash, const uint8_t *buf, chipaddr addr, size_t len)
@@ -361,7 +366,7 @@ static int write_flash_data(struct emu_data *data, uint32_t start, uint32_t len,
 	}
 
 	memcpy(data->flashchip_contents + start, buf, len);
-	data->emu_modified = 1;
+	data->emu_modified = true;
 	return 0;
 }
 
@@ -375,7 +380,7 @@ static int erase_flash_data(struct emu_data *data, uint32_t start, uint32_t len)
 
 	/* FIXME: Maybe use ERASED_VALUE(flash) instead of 0xff ? */
 	memset(data->flashchip_contents + start, 0xff, len);
-	data->emu_modified = 1;
+	data->emu_modified = true;
 	return 0;
 }
 
@@ -896,7 +901,7 @@ static int dummy_spi_send_command(const struct flashctx *flash, unsigned int wri
 		msg_pspew(" 0x%02x", readarr[i]);
 	msg_pspew("\n");
 
-	programmer_delay((writecnt + readcnt) * emu_data->delay_us);
+	default_delay((writecnt + readcnt) * emu_data->delay_us);
 	return 0;
 }
 
@@ -904,6 +909,11 @@ static int dummy_shutdown(void *data)
 {
 	msg_pspew("%s\n", __func__);
 	struct emu_data *emu_data = (struct emu_data *)data;
+
+	emu_data->refs_cnt--;
+	if (emu_data->refs_cnt != 0)
+		return 0;
+
 	if (emu_data->emu_chip != EMULATE_NONE) {
 		if (emu_data->emu_persistent_image && emu_data->emu_modified) {
 			msg_pdbg("Writing %s\n", emu_data->emu_persistent_image);
@@ -918,19 +928,54 @@ static int dummy_shutdown(void *data)
 	return 0;
 }
 
+static void dummy_nop_delay(const struct flashctx *flash, unsigned int usecs)
+{
+}
+
+static enum flashrom_wp_result dummy_wp_read_cfg(struct flashrom_wp_cfg *cfg, struct flashctx *flash)
+{
+	cfg->mode = FLASHROM_WP_MODE_DISABLED;
+	cfg->range.start = 0;
+	cfg->range.len = 0;
+
+	return FLASHROM_WP_OK;
+}
+
+static enum flashrom_wp_result dummy_wp_write_cfg(struct flashctx *flash, const struct flashrom_wp_cfg *cfg)
+{
+	if (cfg->mode != FLASHROM_WP_MODE_DISABLED)
+		return FLASHROM_WP_ERR_MODE_UNSUPPORTED;
+
+	if (cfg->range.start != 0 || cfg->range.len != 0)
+		return FLASHROM_WP_ERR_RANGE_UNSUPPORTED;
+
+	return FLASHROM_WP_OK;
+}
+
+static enum flashrom_wp_result dummy_wp_get_available_ranges(struct flashrom_wp_ranges **list, struct flashctx *flash)
+{
+	/* Not supported */
+	return FLASHROM_WP_ERR_RANGE_LIST_UNAVAILABLE;
+}
+
+
 static const struct spi_master spi_master_dummyflasher = {
+	.map_flash_region	= dummy_map,
+	.unmap_flash_region	= dummy_unmap,
 	.features	= SPI_MASTER_4BA,
 	.max_data_read	= MAX_DATA_READ_UNLIMITED,
 	.max_data_write	= MAX_DATA_UNSPECIFIED,
 	.command	= dummy_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
 	.read		= default_spi_read,
 	.write_256	= dummy_spi_write_256,
-	.write_aai	= default_spi_write_aai,
+	.shutdown	= dummy_shutdown,
 	.probe_opcode	= dummy_spi_probe_opcode,
+	.delay		= dummy_nop_delay,
 };
 
 static const struct par_master par_master_dummyflasher = {
+	.map_flash_region	= dummy_map,
+	.unmap_flash_region	= dummy_unmap,
 	.chip_readb	= dummy_chip_readb,
 	.chip_readw	= dummy_chip_readw,
 	.chip_readl	= dummy_chip_readl,
@@ -939,18 +984,25 @@ static const struct par_master par_master_dummyflasher = {
 	.chip_writew	= dummy_chip_writew,
 	.chip_writel	= dummy_chip_writel,
 	.chip_writen	= dummy_chip_writen,
+	.shutdown	= dummy_shutdown,
+	.delay		= dummy_nop_delay,
 };
 
 static const struct opaque_master opaque_master_dummyflasher = {
-	.probe	= probe_variable_size,
-	.read	= dummy_opaque_read,
-	.write	= dummy_opaque_write,
-	.erase	= dummy_opaque_erase,
+	.probe		= probe_variable_size,
+	.read		= dummy_opaque_read,
+	.write		= dummy_opaque_write,
+	.erase		= dummy_opaque_erase,
+	.shutdown	= dummy_shutdown,
+	.delay		= dummy_nop_delay,
+	.wp_read_cfg	= dummy_wp_read_cfg,
+	.wp_write_cfg	= dummy_wp_write_cfg,
+	.wp_get_ranges	= dummy_wp_get_available_ranges,
 };
 
-static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_supported)
+static int init_data(const struct programmer_cfg *cfg,
+		struct emu_data *data, enum chipbustype *dummy_buses_supported)
 {
-
 	char *bustext = NULL;
 	char *tmp = NULL;
 	unsigned int i;
@@ -958,7 +1010,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 	char *status = NULL;
 	int size = -1;  /* size for VARIABLE_SIZE chip device */
 
-	bustext = extract_programmer_param_str("bus");
+	bustext = extract_programmer_param_str(cfg, "bus");
 	msg_pdbg("Requested buses are: %s\n", bustext ? bustext : "default");
 	if (!bustext)
 		bustext = strdup("parallel+lpc+fwh+spi+prog");
@@ -990,7 +1042,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 		msg_pdbg("Support for all flash bus types disabled.\n");
 	free(bustext);
 
-	tmp = extract_programmer_param_str("spi_write_256_chunksize");
+	tmp = extract_programmer_param_str(cfg, "spi_write_256_chunksize");
 	if (tmp) {
 		data->spi_write_256_chunksize = strtoul(tmp, &endptr, 0);
 		if (*endptr != '\0' || data->spi_write_256_chunksize < 1) {
@@ -1001,7 +1053,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 	}
 	free(tmp);
 
-	tmp = extract_programmer_param_str("spi_blacklist");
+	tmp = extract_programmer_param_str(cfg, "spi_blacklist");
 	if (tmp) {
 		i = strlen(tmp);
 		if (!strncmp(tmp, "0x", 2)) {
@@ -1037,7 +1089,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 	}
 	free(tmp);
 
-	tmp = extract_programmer_param_str("spi_ignorelist");
+	tmp = extract_programmer_param_str(cfg, "spi_ignorelist");
 	if (tmp) {
 		i = strlen(tmp);
 		if (!strncmp(tmp, "0x", 2)) {
@@ -1074,7 +1126,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 	free(tmp);
 
 	/* frequency to emulate in Hz (default), KHz, or MHz */
-	tmp = extract_programmer_param_str("freq");
+	tmp = extract_programmer_param_str(cfg, "freq");
 	if (tmp) {
 		unsigned long int freq;
 		char *units = tmp;
@@ -1090,20 +1142,20 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 		}
 
 		if ((units > tmp) && (units < end)) {
-			int units_valid = 0;
+			bool units_valid = false;
 
 			if (units < end - 3) {
 				;
 			} else if (units == end - 2) {
 				if (!strcasecmp(units, "hz"))
-					units_valid = 1;
+					units_valid = true;
 			} else if (units == end - 3) {
 				if (!strcasecmp(units, "khz")) {
 					freq *= 1000;
-					units_valid = 1;
+					units_valid = true;
 				} else if (!strcasecmp(units, "mhz")) {
 					freq *= 1000000;
-					units_valid = 1;
+					units_valid = true;
 				}
 			}
 
@@ -1124,7 +1176,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 	}
 	free(tmp);
 
-	tmp = extract_programmer_param_str("size");
+	tmp = extract_programmer_param_str(cfg, "size");
 	if (tmp) {
 		size = strtol(tmp, NULL, 10);
 		if (size <= 0 || (size % 1024 != 0)) {
@@ -1136,7 +1188,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 		free(tmp);
 	}
 
-	tmp = extract_programmer_param_str("hwwp");
+	tmp = extract_programmer_param_str(cfg, "hwwp");
 	if (tmp) {
 		if (!strcmp(tmp, "yes")) {
 			msg_pdbg("Emulated chip will have hardware WP enabled\n");
@@ -1151,7 +1203,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 		free(tmp);
 	}
 
-	tmp = extract_programmer_param_str("emulate");
+	tmp = extract_programmer_param_str(cfg, "emulate");
 	if (!tmp) {
 		if (size != -1) {
 			msg_perr("%s: size parameter is only valid for VARIABLE_SIZE chip.\n", __func__);
@@ -1275,7 +1327,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 	free(tmp);
 
 	/* Should emulated flash erase to zero (yes/no)? */
-	tmp = extract_programmer_param_str("erase_to_zero");
+	tmp = extract_programmer_param_str(cfg, "erase_to_zero");
 	if (tmp) {
 		if (data->emu_chip != EMULATE_VARIABLE_SIZE) {
 			msg_perr("%s: erase_to_zero parameter is not valid for real chip.\n", __func__);
@@ -1284,7 +1336,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 		}
 		if (!strcmp(tmp, "yes")) {
 			msg_pdbg("Emulated chip will erase to 0x00\n");
-			data->erase_to_zero = 1;
+			data->erase_to_zero = true;
 		} else if (!strcmp(tmp, "no")) {
 			msg_pdbg("Emulated chip will erase to 0xff\n");
 		} else {
@@ -1295,7 +1347,7 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 	}
 	free(tmp);
 
-	status = extract_programmer_param_str("spi_status");
+	status = extract_programmer_param_str(cfg, "spi_status");
 	if (status) {
 		unsigned int emu_status;
 
@@ -1339,8 +1391,9 @@ static int init_data(struct emu_data *data, enum chipbustype *dummy_buses_suppor
 	return 0;
 }
 
-static int dummy_init(void)
+static int dummy_init(const struct programmer_cfg *cfg)
 {
+	int ret = 0;
 	struct stat image_stat;
 
 	struct emu_data *data = calloc(1, sizeof(*data));
@@ -1355,7 +1408,7 @@ static int dummy_init(void)
 	msg_pspew("%s\n", __func__);
 
 	enum chipbustype dummy_buses_supported;
-	if (init_data(data, &dummy_buses_supported)) {
+	if (init_data(cfg, data, &dummy_buses_supported)) {
 		free(data);
 		return 1;
 	}
@@ -1371,7 +1424,7 @@ static int dummy_init(void)
 	memset(data->flashchip_contents, data->erase_to_zero ? 0x00 : 0xff, data->emu_chip_size);
 
 	/* Will be freed by shutdown function if necessary. */
-	data->emu_persistent_image = extract_programmer_param_str("image");
+	data->emu_persistent_image = extract_programmer_param_str(cfg, "image");
 	if (!data->emu_persistent_image) {
 		/* Nothing else to do. */
 		goto dummy_init_out;
@@ -1398,23 +1451,22 @@ static int dummy_init(void)
 	}
 
 dummy_init_out:
-	if (register_shutdown(dummy_shutdown, data)) {
-		free(data->emu_persistent_image);
-		free(data->flashchip_contents);
-		free(data);
-		return 1;
+	if (dummy_buses_supported & BUS_PROG) {
+		data->refs_cnt++;
+		ret |= register_opaque_master(&opaque_master_dummyflasher, data);
+	}
+	if ((dummy_buses_supported & BUS_NONSPI) && !ret) {
+		data->refs_cnt++;
+		ret |= register_par_master(&par_master_dummyflasher,
+					   dummy_buses_supported & BUS_NONSPI,
+					   data);
+	}
+	if ((dummy_buses_supported & BUS_SPI) && !ret) {
+		data->refs_cnt++;
+		ret |= register_spi_master(&spi_master_dummyflasher, data);
 	}
 
-	if (dummy_buses_supported & BUS_PROG)
-		register_opaque_master(&opaque_master_dummyflasher, data);
-	if (dummy_buses_supported & BUS_NONSPI)
-		register_par_master(&par_master_dummyflasher,
-				    dummy_buses_supported & BUS_NONSPI,
-				    data);
-	if (dummy_buses_supported & BUS_SPI)
-		register_spi_master(&spi_master_dummyflasher, data);
-
-	return 0;
+	return ret;
 }
 
 const struct programmer_entry programmer_dummy = {
@@ -1423,7 +1475,4 @@ const struct programmer_entry programmer_dummy = {
 				/* FIXME */
 	.devs.note		= "Dummy device, does nothing and logs all accesses\n",
 	.init			= dummy_init,
-	.map_flash_region	= dummy_map,
-	.unmap_flash_region	= dummy_unmap,
-	.delay			= internal_delay,
 };

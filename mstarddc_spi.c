@@ -15,6 +15,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <sys/types.h>
@@ -32,7 +33,7 @@
 struct mstarddc_spi_data {
 	int fd;
 	int addr;
-	int doreset;
+	bool doreset;
 };
 
 // MSTAR DDC Commands
@@ -47,7 +48,7 @@ static int mstarddc_spi_shutdown(void *data)
 	struct mstarddc_spi_data *mstarddc_data = data;
 
 	// Reset, disables ISP mode
-	if (mstarddc_data->doreset == 1) {
+	if (mstarddc_data->doreset) {
 		uint8_t cmd = MSTARDDC_SPI_RESET;
 		if (write(mstarddc_data->fd, &cmd, 1) < 0) {
 			msg_perr("Error sending reset command: errno %d.\n",
@@ -129,7 +130,7 @@ static int mstarddc_spi_send_command(const struct flashctx *flash,
 	/* Do not reset if something went wrong, as it might prevent from
 	 * retrying flashing. */
 	if (ret != 0)
-		mstarddc_data->doreset = 0;
+		mstarddc_data->doreset = false;
 
 	if (cmd)
 		free(cmd);
@@ -141,25 +142,22 @@ static const struct spi_master spi_master_mstarddc = {
 	.max_data_read	= 256,
 	.max_data_write	= 256,
 	.command	= mstarddc_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
 	.shutdown	= mstarddc_spi_shutdown,
-	.probe_opcode	= default_spi_probe_opcode,
 };
 
 /* Returns 0 upon success, a negative number upon errors. */
-static int mstarddc_spi_init(void)
+static int mstarddc_spi_init(const struct programmer_cfg *cfg)
 {
 	int ret = 0;
 	int mstarddc_fd = -1;
 	int mstarddc_addr;
-	int mstarddc_doreset = 1;
+	bool mstarddc_doreset = true;
 	struct mstarddc_spi_data *mstarddc_data;
 
 	// Get device, address from command-line
-	char *i2c_device = extract_programmer_param_str("dev");
+	char *i2c_device = extract_programmer_param_str(cfg, "dev");
 	if (i2c_device != NULL && strlen(i2c_device) > 0) {
 		char *i2c_address = strchr(i2c_device, ':');
 		if (i2c_address != NULL) {
@@ -182,9 +180,9 @@ static int mstarddc_spi_init(void)
 	msg_pinfo("Info: Will try to use device %s and address 0x%02x.\n", i2c_device, mstarddc_addr);
 
 	// Get noreset=1 option from command-line
-	char *noreset = extract_programmer_param_str("noreset");
+	char *noreset = extract_programmer_param_str(cfg, "noreset");
 	if (noreset != NULL && noreset[0] == '1')
-		mstarddc_doreset = 0;
+		mstarddc_doreset = false;
 	free(noreset);
 	msg_pinfo("Info: Will %sreset the device at the end.\n", mstarddc_doreset ? "" : "NOT ");
 	// Open device
@@ -254,7 +252,4 @@ const struct programmer_entry programmer_mstarddc_spi = {
 	.type			= OTHER,
 	.devs.note		= "MSTAR DDC devices addressable via /dev/i2c-* on Linux.\n",
 	.init			= mstarddc_spi_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

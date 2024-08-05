@@ -4,12 +4,12 @@ RUN \
 	useradd -p locked -m mani && \
 	apt-get -qq update && \
 	apt-get -qq upgrade && \
-	apt-get -qq dist-upgrade && \
 	apt-get -qqy install gcc make git doxygen ccache pkg-config \
 		libpci-dev libusb-dev libftdi-dev libusb-1.0-0-dev && \
 	{ apt-get -qqy install libjaylink-dev || true; } && \
 	apt-get clean
 
+ENV GIT_SSL_NO_VERIFY=1
 USER mani
 RUN \
 	cd && \

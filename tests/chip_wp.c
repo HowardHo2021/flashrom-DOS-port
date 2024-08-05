@@ -24,6 +24,12 @@
 #include "programmer.h"
 #include "tests.h"
 
+static int unittest_print_cb(enum flashrom_log_level level, const char *fmt, va_list ap)
+{
+	if (level > FLASHROM_MSG_INFO) return 0;
+	return vfprintf(stderr, fmt, ap);
+}
+
 /*
  * Tests in this file do not use any mocking, because using write-protect
  * emulation in dummyflasher programmer is sufficient
@@ -47,6 +53,8 @@ static void setup_chip(struct flashrom_flashctx *flash, struct flashrom_layout *
 		flashrom_layout_set(flash, *layout);
 	}
 
+	flashrom_set_log_callback((flashrom_log_callback *)&unittest_print_cb);
+
 	assert_int_equal(0, programmer_init(&programmer_dummy, programmer_param));
 	/* Assignment below normally happens while probing, but this test is not probing. */
 	flash->mst = &registered_masters[0];
@@ -63,28 +71,29 @@ static void teardown(struct flashrom_layout **layout)
 static const struct flashchip chip_W25Q128_V = {
 	.vendor		= "aklm&dummyflasher",
 	.total_size	= 16 * 1024,
+	.page_size	= 1024,
 	.tested		= TEST_OK_PREW,
-	.read		= spi_chip_read,
-	.write		= spi_chip_write_256,
-	.unlock         = spi_disable_blockprotect,
+	.read		= SPI_CHIP_READ,
+	.write		= SPI_CHIP_WRITE256,
+	.unlock         = SPI_DISABLE_BLOCKPROTECT,
 	.feature_bits	= FEATURE_WRSR_WREN | FEATURE_OTP | FEATURE_WRSR_EXT2 | FEATURE_WRSR2 | FEATURE_WRSR3,
 	.block_erasers  =
 	{
 		{
 			.eraseblocks = { {4 * 1024, 4096} },
-			.block_erase = spi_block_erase_20,
+			.block_erase = SPI_BLOCK_ERASE_20,
 		}, {
 			.eraseblocks = { {32 * 1024, 512} },
-			.block_erase = spi_block_erase_52,
+			.block_erase = SPI_BLOCK_ERASE_52,
 		}, {
 			.eraseblocks = { {64 * 1024, 256} },
-			.block_erase = spi_block_erase_d8,
+			.block_erase = SPI_BLOCK_ERASE_D8,
 		}, {
 			.eraseblocks = { {16 * 1024 * 1024, 1} },
-			.block_erase = spi_block_erase_60,
+			.block_erase = SPI_BLOCK_ERASE_60,
 		}, {
 			.eraseblocks = { {16 * 1024 * 1024, 1} },
-			.block_erase = spi_block_erase_c7,
+			.block_erase = SPI_BLOCK_ERASE_C7,
 		}
 	},
 	.reg_bits	=
@@ -97,7 +106,7 @@ static const struct flashchip chip_W25Q128_V = {
 		.cmp    = {STATUS2, 6, RW},
 		.wps    = {STATUS3, 2, RW},
 	},
-	.decode_range	= decode_range_spi25,
+	.decode_range	= DECODE_RANGE_SPI25,
 };
 
 /* Trying to set an unsupported WP range fails */
@@ -105,7 +114,7 @@ void invalid_wp_range_dummyflasher_test_success(void **state)
 {
 	(void) state; /* unused */
 
-	char *param_dup = strdup("bus=spi,emulate=W25Q128FV,hwwp=no");
+	const char *param_dup = "bus=spi,emulate=W25Q128FV,hwwp=no";
 
 	struct flashrom_flashctx flash = { 0 };
 	struct flashchip mock_chip = chip_W25Q128_V;
@@ -122,7 +131,6 @@ void invalid_wp_range_dummyflasher_test_success(void **state)
 	teardown(NULL);
 
 	flashrom_wp_cfg_release(wp_cfg);
-	free(param_dup);
 }
 
 /* Enabling hardware WP with a valid range succeeds */
@@ -130,7 +138,7 @@ void set_wp_range_dummyflasher_test_success(void **state)
 {
 	(void) state; /* unused */
 
-	char *param_dup = strdup("bus=spi,emulate=W25Q128FV,hwwp=no");
+	const char *param_dup = "bus=spi,emulate=W25Q128FV,hwwp=no";
 
 	struct flashrom_flashctx flash = { 0 };
 	struct flashchip mock_chip = chip_W25Q128_V;
@@ -157,7 +165,6 @@ void set_wp_range_dummyflasher_test_success(void **state)
 	teardown(NULL);
 
 	flashrom_wp_cfg_release(wp_cfg);
-	free(param_dup);
 }
 
 /* Enable hardware WP and verify that it can not be unset */
@@ -165,7 +172,7 @@ void switch_wp_mode_dummyflasher_test_success(void **state)
 {
 	(void) state; /* unused */
 
-	char *param_dup = strdup("bus=spi,emulate=W25Q128FV,hwwp=yes");
+	const char *param_dup = "bus=spi,emulate=W25Q128FV,hwwp=yes";
 
 	struct flashrom_flashctx flash = { 0 };
 	struct flashchip mock_chip = chip_W25Q128_V;
@@ -197,7 +204,6 @@ void switch_wp_mode_dummyflasher_test_success(void **state)
 	teardown(NULL);
 
 	flashrom_wp_cfg_release(wp_cfg);
-	free(param_dup);
 }
 
 /* WP state is decoded correctly from status registers */
@@ -219,7 +225,7 @@ void wp_init_from_status_dummyflasher_test_success(void **state)
 	 * Multiplaying that by base unit gives 16 KiB protected region at the
 	 * bottom (start of the chip), which is then complemented.
 	 */
-	char *param_dup = strdup("bus=spi,emulate=W25Q128FV,spi_status=0x41ec");
+	const char *param_dup = "bus=spi,emulate=W25Q128FV,spi_status=0x41ec";
 
 	struct flashrom_flashctx flash = { 0 };
 	struct flashchip mock_chip = chip_W25Q128_V;
@@ -242,7 +248,6 @@ void wp_init_from_status_dummyflasher_test_success(void **state)
 	teardown(NULL);
 
 	flashrom_wp_cfg_release(wp_cfg);
-	free(param_dup);
 }
 
 /* Enabled WP makes full chip erasure fail */
@@ -255,7 +260,7 @@ void full_chip_erase_with_wp_dummyflasher_test_success(void **state)
 	struct flashchip mock_chip = chip_W25Q128_V;
 	struct flashrom_wp_cfg *wp_cfg;
 
-	char *param_dup = strdup("bus=spi,emulate=W25Q128FV,hwwp=yes");
+	const char *param_dup = "bus=spi,emulate=W25Q128FV,hwwp=yes";
 
 	setup_chip(&flash, &layout, &mock_chip, param_dup);
 	/* Layout regions are created by setup_chip(). */
@@ -267,6 +272,15 @@ void full_chip_erase_with_wp_dummyflasher_test_success(void **state)
 	/* Write protection takes effect only after changing SRP values, so at
 	   this stage WP is not enabled and erase completes successfully. */
 	assert_int_equal(0, flashrom_flash_erase(&flash));
+
+	/* Write non-erased value to entire chip so that erase operations cannot
+	 * be optimized away. */
+	unsigned long size = flashrom_flash_getsize(&flash);
+	uint8_t *const contents = malloc(size);
+	assert_non_null(contents);
+	memset(contents, UNERASED_VALUE(&flash), size);
+	assert_int_equal(0, flashrom_image_write(&flash, contents, size, NULL));
+	free(contents);
 
 	assert_int_equal(0, flashrom_wp_read_cfg(wp_cfg, &flash));
 
@@ -284,7 +298,6 @@ void full_chip_erase_with_wp_dummyflasher_test_success(void **state)
 	teardown(&layout);
 
 	flashrom_wp_cfg_release(wp_cfg);
-	free(param_dup);
 }
 
 /* Enabled WP does not block erasing unprotected parts of the chip */
@@ -297,7 +310,7 @@ void partial_chip_erase_with_wp_dummyflasher_test_success(void **state)
 	struct flashchip mock_chip = chip_W25Q128_V;
 	struct flashrom_wp_cfg *wp_cfg;
 
-	char *param_dup = strdup("bus=spi,emulate=W25Q128FV,hwwp=yes");
+	const char *param_dup = "bus=spi,emulate=W25Q128FV,hwwp=yes";
 
 	setup_chip(&flash, &layout, &mock_chip, param_dup);
 	/* Layout region is created by setup_chip(). */
@@ -321,5 +334,69 @@ void partial_chip_erase_with_wp_dummyflasher_test_success(void **state)
 	teardown(&layout);
 
 	flashrom_wp_cfg_release(wp_cfg);
-	free(param_dup);
+}
+
+/* Chip register values & masks are calculated correctly by WP */
+void wp_get_register_values_and_masks(void **state)
+{
+	(void) state; /* unused */
+
+	/*
+	 * Test with range: start = 0x004000, lengh = 0xffc000
+	 *
+	 * WP should use these bit values:
+	 * WPS  (S17) = 0 (write protect scheme)
+	 * CMP  (S14) = 1 (range complement)
+	 * SRP1 (S8)  = 0
+	 * SRP0 (S7)  = 1 (`SRP1 == 1 && SRP0 == 1` is permanent mode)
+	 * SEC  (S6)  = 1 (base unit is a 4 KiB sector)
+	 * TB   (S5)  = 1 (bottom up range)
+	 * BP2  (S4)  = 0
+	 * BP1  (S3)  = 1
+	 * BP0  (S2)  = 1 (bp: BP2-0 == 0b011 == 3)
+	 *
+	 * Register values:
+	 * SR1 = 0b11101100 = 0xec
+	 * SR2 = 0b01000000 = 0x40
+	 * SR3 = 0b00000000 = 0x00
+	 *
+	 * Masks for WP bits in registers:
+	 * SR1: 0b11111100 = 0xfc
+	 * SR2: 0b01000000 = 0x41
+	 * SR3: 0b00000100 = 0x04
+	 *
+	 * All WP bits are RW so write masks should be the same as the bit masks.
+	 *
+	 */
+	struct flashrom_flashctx flash = { 0 };
+	struct flashchip mock_chip = chip_W25Q128_V;
+	struct flashrom_wp_cfg *wp_cfg;
+
+	uint8_t reg_values[MAX_REGISTERS];
+	uint8_t bit_masks[MAX_REGISTERS];
+	uint8_t write_masks[MAX_REGISTERS];
+
+	setup_chip(&flash, NULL, &mock_chip, "bus=spi,emulate=W25Q128FV");
+
+	assert_int_equal(0, flashrom_wp_cfg_new(&wp_cfg));
+	flashrom_wp_set_mode(wp_cfg, FLASHROM_WP_MODE_HARDWARE);
+	flashrom_wp_set_range(wp_cfg, 0x004000, 0xffc000);
+
+	assert_int_equal(0, wp_cfg_to_reg_values(reg_values, bit_masks, write_masks, &flash, wp_cfg));
+
+	assert_int_equal(0xec, reg_values[STATUS1]);
+	assert_int_equal(0x40, reg_values[STATUS2]);
+	assert_int_equal(0x00, reg_values[STATUS3]);
+
+	assert_int_equal(0xfc, bit_masks[STATUS1]);
+	assert_int_equal(0x41, bit_masks[STATUS2]);
+	assert_int_equal(0x04, bit_masks[STATUS3]);
+
+	assert_int_equal(0xfc, write_masks[STATUS1]);
+	assert_int_equal(0x41, write_masks[STATUS2]);
+	assert_int_equal(0x04, write_masks[STATUS3]);
+
+	teardown(NULL);
+
+	flashrom_wp_cfg_release(wp_cfg);
 }

@@ -20,6 +20,7 @@
 #ifndef __PROGRAMMER_H__
 #define __PROGRAMMER_H__ 1
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "flash.h"	/* for chipaddr and flashctx */
@@ -28,6 +29,11 @@ enum programmer_type {
 	PCI = 1, /* to detect uninitialized values */
 	USB,
 	OTHER,
+};
+struct board_cfg;
+struct programmer_cfg {
+	char *params;
+	struct board_cfg *bcfg;
 };
 
 struct dev_entry {
@@ -46,23 +52,20 @@ struct programmer_entry {
 		const char *const note;
 	} devs;
 
-	int (*init) (void);
-
-	void *(*map_flash_region) (const char *descr, uintptr_t phys_addr, size_t len);
-	void (*unmap_flash_region) (void *virt_addr, size_t len);
-
-	void (*delay) (unsigned int usecs);
+	int (*init) (const struct programmer_cfg *cfg);
 };
 
 extern const struct programmer_entry *const programmer_table[];
 extern const size_t programmer_table_size;
 
 /* programmer drivers */
+extern const struct programmer_entry programmer_asm106x;
 extern const struct programmer_entry programmer_atahpt;
 extern const struct programmer_entry programmer_atapromise;
 extern const struct programmer_entry programmer_atavia;
 extern const struct programmer_entry programmer_buspirate_spi;
 extern const struct programmer_entry programmer_ch341a_spi;
+extern const struct programmer_entry programmer_ch347_spi;
 extern const struct programmer_entry programmer_dediprog;
 extern const struct programmer_entry programmer_developerbox;
 extern const struct programmer_entry programmer_digilent_spi;
@@ -96,6 +99,7 @@ extern const struct programmer_entry programmer_satasii;
 extern const struct programmer_entry programmer_serprog;
 extern const struct programmer_entry programmer_stlinkv3_spi;
 extern const struct programmer_entry programmer_usbblaster_spi;
+extern const struct programmer_entry programmer_dirtyjtag_spi;
 
 int programmer_init(const struct programmer_entry *prog, const char *param);
 int programmer_shutdown(void);
@@ -123,7 +127,7 @@ struct pci_filter;
 extern struct pci_access *pacc;
 int pci_init_common(void);
 uintptr_t pcidev_readbar(struct pci_dev *dev, int bar);
-struct pci_dev *pcidev_init(const struct dev_entry *devs, int bar);
+struct pci_dev *pcidev_init(const struct programmer_cfg *cfg, const struct dev_entry *devs, int bar);
 struct pci_dev *pcidev_scandev(struct pci_filter *filter, struct pci_dev *start);
 struct pci_dev *pcidev_getdevfn(struct pci_dev *dev, const int func);
 struct pci_dev *pcidev_find_vendorclass(uint16_t vendor, uint16_t devclass);
@@ -149,7 +153,7 @@ struct penable {
 	const enum test_state status;
 	const char *vendor_name;
 	const char *device_name;
-	int (*doit) (struct pci_dev *dev, const char *name);
+	int (*doit) (const struct programmer_cfg *cfg, struct pci_dev *dev, const char *name);
 };
 
 extern const struct penable chipset_enables[];
@@ -158,6 +162,11 @@ enum board_match_phase {
 	P1,
 	P2,
 	P3
+};
+
+struct board_cfg {
+	int is_laptop;
+	bool laptop_ok;
 };
 
 struct board_match {
@@ -189,10 +198,11 @@ struct board_match {
 
 	int max_rom_decode_parallel;
 	const enum test_state status;
-	int (*enable) (void); /* May be NULL. */
+	int (*enable) (struct board_cfg *cfg); /* May be NULL. */
 };
 
 extern const struct board_match board_matches[];
+extern const size_t board_matches_size;
 
 struct board_info {
 	const char *vendor;
@@ -209,10 +219,8 @@ extern const struct board_info laptops_known[];
 #endif
 
 /* udelay.c */
-void myusec_delay(unsigned int usecs);
-void myusec_calibrate_delay(void);
 void internal_sleep(unsigned int usecs);
-void internal_delay(unsigned int usecs);
+void default_delay(unsigned int usecs);
 
 #if CONFIG_INTERNAL == 1
 /* board_enable.c */
@@ -225,12 +233,12 @@ int it8705f_write_enable(uint8_t port);
 uint8_t sio_read(uint16_t port, uint8_t reg);
 void sio_write(uint16_t port, uint8_t reg, uint8_t data);
 void sio_mask(uint16_t port, uint8_t reg, uint8_t data, uint8_t mask);
-void board_handle_before_superio(void);
-void board_handle_before_laptop(void);
-int board_flash_enable(const char *vendor, const char *model, const char *cb_vendor, const char *cb_model);
+void board_handle_before_superio(struct board_cfg *cfg, bool force_boardenable);
+void board_handle_before_laptop(struct board_cfg *cfg, bool force_boardenable);
+int board_flash_enable(struct board_cfg *cfg, const char *vendor, const char *model, const char *cb_vendor, const char *cb_model, bool force_boardenable);
 
 /* chipset_enable.c */
-int chipset_flash_enable(void);
+int chipset_flash_enable(const struct programmer_cfg *cfg);
 
 /* processor_enable.c */
 int processor_flash_enable(void);
@@ -243,7 +251,7 @@ int cb_check_image(const uint8_t *bios, unsigned int size);
 
 /* dmi.c */
 #if defined(__i386__) || defined(__x86_64__)
-void dmi_init(void);
+void dmi_init(int *is_laptop);
 bool dmi_is_supported(void);
 int dmi_match(const char *pattern);
 #endif // defined(__i386__) || defined(__x86_64__)
@@ -262,10 +270,7 @@ extern int superio_count;
 #endif
 
 #if CONFIG_INTERNAL == 1
-extern int is_laptop;
-extern int laptop_ok;
-extern int force_boardenable;
-extern int force_boardmismatch;
+extern bool force_boardmismatch;
 void probe_superio(void);
 int register_superio(struct superio s);
 extern enum chipbustype internal_buses_supported;
@@ -284,10 +289,9 @@ struct decode_sizes {
 };
 // FIXME: These need to be local, not global
 extern struct decode_sizes max_rom_decode;
-extern int programmer_may_write;
-extern unsigned long flashbase;
-unsigned int count_max_decode_exceedings(const struct flashctx *flash);
-char *extract_programmer_param_str(const char *param_name);
+extern bool programmer_may_write;
+extern uintptr_t flashbase; /* used in programmer_enable.c */
+char *extract_programmer_param_str(const struct programmer_cfg *cfg, const char *param_name);
 
 /* spi.c */
 #define MAX_DATA_UNSPECIFIED 0
@@ -307,21 +311,21 @@ struct spi_master {
 	int (*multicommand)(const struct flashctx *flash, struct spi_command *cmds);
 
 	/* Optimized functions for this master */
+	void *(*map_flash_region) (const char *descr, uintptr_t phys_addr, size_t len);
+	void (*unmap_flash_region) (void *virt_addr, size_t len);
 	int (*read)(struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
 	int (*write_256)(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 	int (*write_aai)(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 	int (*shutdown)(void *data);
-	bool (*probe_opcode)(struct flashctx *flash, uint8_t opcode);
+	bool (*probe_opcode)(const struct flashctx *flash, uint8_t opcode); /* NULL func implies true. */
+	void (*delay) (const struct flashctx *flash, unsigned int usecs);
+	void (*get_region)(const struct flashctx *flash, unsigned int addr, struct flash_region *region);
 	void *data;
 };
 
-int default_spi_send_command(const struct flashctx *flash, unsigned int writecnt, unsigned int readcnt,
-			     const unsigned char *writearr, unsigned char *readarr);
-int default_spi_send_multicommand(const struct flashctx *flash, struct spi_command *cmds);
 int default_spi_read(struct flashctx *flash, uint8_t *buf, unsigned int start, unsigned int len);
 int default_spi_write_256(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
 int default_spi_write_aai(struct flashctx *flash, const uint8_t *buf, unsigned int start, unsigned int len);
-bool default_spi_probe_opcode(struct flashctx *flash, uint8_t opcode);
 int register_spi_master(const struct spi_master *mst, void *data);
 
 /* The following enum is needed by ich_descriptor_tool and ich* code as well as in chipset_enable.c. */
@@ -348,20 +352,23 @@ enum ich_chipset {
 	CHIPSET_9_SERIES_WILDCAT_POINT_LP,
 	CHIPSET_100_SERIES_SUNRISE_POINT, /* also 6th/7th gen Core i/o (LP) variants */
 	CHIPSET_C620_SERIES_LEWISBURG,
+	CHIPSET_C740_SERIES_EMMITSBURG,
 	CHIPSET_300_SERIES_CANNON_POINT,
 	CHIPSET_400_SERIES_COMET_POINT,
 	CHIPSET_500_SERIES_TIGER_POINT,
 	CHIPSET_600_SERIES_ALDER_POINT,
-	CHIPSET_METEOR_LAKE,
 	CHIPSET_APOLLO_LAKE,
 	CHIPSET_GEMINI_LAKE,
 	CHIPSET_JASPER_LAKE,
 	CHIPSET_ELKHART_LAKE,
+	/* All chipsets after METEOR_LAKE should support checking BIOS_BM to get read/write access to of FREG0~15 */
+	CHIPSET_METEOR_LAKE,
+	CHIPSET_PANTHER_LAKE,
 };
 
 /* ichspi.c */
 #if CONFIG_INTERNAL == 1
-int ich_init_spi(void *spibar, enum ich_chipset ich_generation);
+int ich_init_spi(const struct programmer_cfg *cfg, void *spibar, enum ich_chipset ich_generation);
 int via_init_spi(uint32_t mmio_base);
 
 /* amd_imc.c */
@@ -371,25 +378,29 @@ int amd_imc_shutdown(struct pci_dev *dev);
 void enter_conf_mode_ite(uint16_t port);
 void exit_conf_mode_ite(uint16_t port);
 void probe_superio_ite(void);
-int init_superio_ite(void);
+int init_superio_ite(const struct programmer_cfg *cfg);
 
-#if CONFIG_LINUX_MTD == 1
 /* trivial wrapper to avoid cluttering internal_init() with #if */
-static inline int try_mtd(void) { return programmer_linux_mtd.init(); };
+static inline int try_mtd(const struct programmer_cfg *cfg)
+{
+#if CONFIG_LINUX_MTD == 1
+	return programmer_linux_mtd.init(cfg);
 #else
-static inline int try_mtd(void) { return 1; };
+	return 1;
 #endif
+}
 
 /* mcp6x_spi.c */
 int mcp6x_spi_init(int want_spi);
 
-
+/* internal_par.c */
+void internal_par_init(enum chipbustype buses);
 
 /* sb600spi.c */
-int sb600_probe_spi(struct pci_dev *dev);
+int sb600_probe_spi(const struct programmer_cfg *cfg, struct pci_dev *dev);
 
 /* wbsio_spi.c */
-int wbsio_check_for_spi(void);
+int wbsio_check_for_spi(struct board_cfg *);
 #endif
 
 /* opaque.c */
@@ -412,21 +423,17 @@ struct opaque_master {
 	enum flashrom_wp_result (*wp_write_cfg)(struct flashctx *, const struct flashrom_wp_cfg *);
 	enum flashrom_wp_result (*wp_read_cfg)(struct flashrom_wp_cfg *, struct flashctx *);
 	enum flashrom_wp_result (*wp_get_ranges)(struct flashrom_wp_ranges **, struct flashctx *);
+	void (*get_region)(const struct flashctx *flash, unsigned int addr, struct flash_region *region);
 	int (*shutdown)(void *data);
+	void (*delay) (const struct flashctx *flash, unsigned int usecs);
 	void *data;
 };
 int register_opaque_master(const struct opaque_master *mst, void *data);
 
-/* programmer.c */
-void *fallback_map(const char *descr, uintptr_t phys_addr, size_t len);
-void fallback_unmap(void *virt_addr, size_t len);
-void fallback_chip_writew(const struct flashctx *flash, uint16_t val, chipaddr addr);
-void fallback_chip_writel(const struct flashctx *flash, uint32_t val, chipaddr addr);
-void fallback_chip_writen(const struct flashctx *flash, const uint8_t *buf, chipaddr addr, size_t len);
-uint16_t fallback_chip_readw(const struct flashctx *flash, const chipaddr addr);
-uint32_t fallback_chip_readl(const struct flashctx *flash, const chipaddr addr);
-void fallback_chip_readn(const struct flashctx *flash, uint8_t *buf, const chipaddr addr, size_t len);
+/* parallel.c */
 struct par_master {
+	void *(*map_flash_region) (const char *descr, uintptr_t phys_addr, size_t len);
+	void (*unmap_flash_region) (void *virt_addr, size_t len);
 	void (*chip_writeb) (const struct flashctx *flash, uint8_t val, chipaddr addr);
 	void (*chip_writew) (const struct flashctx *flash, uint16_t val, chipaddr addr);
 	void (*chip_writel) (const struct flashctx *flash, uint32_t val, chipaddr addr);
@@ -436,9 +443,12 @@ struct par_master {
 	uint32_t (*chip_readl) (const struct flashctx *flash, const chipaddr addr);
 	void (*chip_readn) (const struct flashctx *flash, uint8_t *buf, const chipaddr addr, size_t len);
 	int (*shutdown)(void *data);
+	void (*delay) (const struct flashctx *flash, unsigned int usecs);
 	void *data;
 };
 int register_par_master(const struct par_master *mst, const enum chipbustype buses, void *data);
+
+/* programmer.c */
 struct registered_master {
 	enum chipbustype buses_supported;
 	struct {
@@ -509,6 +519,12 @@ static inline bool spi_master_no_4ba_modes(const struct flashctx *const flash)
 {
 	return flash->mst->buses_supported & BUS_SPI &&
 		flash->mst->spi.features & SPI_MASTER_NO_4BA_MODES;
+}
+/* spi_chip feature checks */
+static inline bool spi_chip_4ba(const struct flashctx *const flash)
+{
+	return flash->chip->bustype == BUS_SPI &&
+		(flash->chip->feature_bits & (FEATURE_4BA_ENTER | FEATURE_4BA_ENTER_WREN | FEATURE_4BA_ENTER_EAR7));
 }
 
 /* usbdev.c */

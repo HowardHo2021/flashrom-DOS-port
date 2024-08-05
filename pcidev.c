@@ -192,15 +192,7 @@ struct pci_dev *pcidev_find(uint16_t vendor, uint16_t device)
 
 struct pci_dev *pcidev_getdevfn(struct pci_dev *dev, const int func)
 {
-#if !defined(OLD_PCI_GET_DEV)
 	struct pci_dev *const new = pci_get_dev(pacc, dev->domain, dev->bus, dev->dev, func);
-#else
-	/* pciutils/libpci before version 2.2 is too old to support
-	 * PCI domains. Such old machines usually don't have domains
-	 * besides domain 0, so this is not a problem.
-	 */
-	struct pci_dev *const new = pci_get_dev(pacc, dev->bus, dev->dev, func);
-#endif
 	if (new)
 		pci_fill_info(new, PCI_FILL_IDENT);
 	return new;
@@ -257,7 +249,7 @@ int pci_init_common(void)
  * also matches the specified bus:device.function.
  * For convenience, this function also registers its own undo handlers.
  */
-struct pci_dev *pcidev_init(const struct dev_entry *devs, int bar)
+struct pci_dev *pcidev_init(const struct programmer_cfg *cfg, const struct dev_entry *devs, int bar)
 {
 	struct pci_dev *dev;
 	struct pci_dev *found_dev = NULL;
@@ -272,7 +264,7 @@ struct pci_dev *pcidev_init(const struct dev_entry *devs, int bar)
 	pci_filter_init(pacc, &filter);
 
 	/* Filter by bb:dd.f (if supplied by the user). */
-	pcidev_bdf = extract_programmer_param_str("pci");
+	pcidev_bdf = extract_programmer_param_str(cfg, "pci");
 	if (pcidev_bdf != NULL) {
 		if ((msg = pci_filter_parse_slot(&filter, pcidev_bdf))) {
 			msg_perr("Error: %s\n", msg);

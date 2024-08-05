@@ -18,7 +18,9 @@
 
 #include <include/test.h>
 #include <string.h>
+#if defined(__linux__) && !defined(__ANDROID__)
 #include <linux/spi/spidev.h>
+#endif
 
 #include "tests.h"
 #include "libflashrom.h"
@@ -26,13 +28,12 @@
 #include "programmer.h"
 #include "spi.h"
 
-#define SKIP_TEST(name) \
-	void name (void **state) { skip(); }
-
 void run_basic_lifecycle(void **state, const struct io_mock *io,
 		const struct programmer_entry *prog, const char *param);
 
 void run_probe_lifecycle(void **state, const struct io_mock *io,
 		const struct programmer_entry *prog, const char *param, const char *const chip_name);
 
+void run_init_error_path(void **state, const struct io_mock *io,
+		const struct programmer_entry *prog, const char *param, const int error_code);
 #endif /* __LIFECYCLE_H__ */

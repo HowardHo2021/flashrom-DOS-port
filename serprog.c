@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2009, 2011 Urja Rannikko <urjaman@gmail.com>
  * Copyright (C) 2009 Carl-Daniel Hailfinger
+ * Copyright (C) 2024 Riku Viitanen <riku.viitanen@protonmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -15,6 +16,7 @@
  * GNU General Public License for more details.
  */
 
+#include <stdbool.h>
 #include <stdio.h>
 #if ! IS_WINDOWS /* stuff (presumably) needed for sockets only */
 #include <stdlib.h>
@@ -62,6 +64,7 @@
 #define S_CMD_O_SPIOP		0x13	/* Perform SPI operation.			*/
 #define S_CMD_S_SPI_FREQ	0x14	/* Set SPI clock frequency			*/
 #define S_CMD_S_PIN_STATE	0x15	/* Enable/disable output drivers		*/
+#define S_CMD_S_SPI_CS		0x16	/* Set SPI chip select to use			*/
 
 #define MSGHEADER "serprog: "
 
@@ -156,7 +159,7 @@ static int sp_synchronize(void)
 		goto err_out;
 	}
 	/* A second should be enough to get all the answers to the buffer */
-	internal_delay(1000 * 1000);
+	default_delay(1000 * 1000);
 	sp_flush_incoming();
 
 	/* Then try up to 8 times to send syncnop and get the correct special *
@@ -437,16 +440,32 @@ static int serprog_shutdown(void *data)
 	return 0;
 }
 
+static void *serprog_map(const char *descr, uintptr_t phys_addr, size_t len)
+{
+	/* Serprog transmits 24 bits only and assumes the underlying implementation handles any remaining bits
+	 * correctly (usually setting them to one either in software (for FWH/LPC) or relying on the fact that
+	 * the hardware observes a subset of the address bits only). Combined with the standard mapping of
+	 * flashrom this creates a 16 MB-wide window just below the 4 GB boundary where serprog can operate (as
+	 * needed for non-SPI chips). Below we make sure that the requested range is within this window. */
+	if ((phys_addr & 0xFF000000) == 0xFF000000) {
+		return (void*)phys_addr;
+	}
+	msg_pwarn(MSGHEADER "requested mapping %s is incompatible: 0x%zx bytes at 0x%0*" PRIxPTR ".\n",
+		  descr, len, PRIxPTR_WIDTH, phys_addr);
+	return NULL;
+}
+
+static void serprog_delay(const struct flashctx *flash, unsigned int usecs);
+
 static struct spi_master spi_master_serprog = {
+	.map_flash_region	= serprog_map,
 	.features	= SPI_MASTER_4BA,
 	.max_data_read	= MAX_DATA_READ_UNLIMITED,
 	.max_data_write	= MAX_DATA_WRITE_UNLIMITED,
 	.command	= serprog_spi_send_command,
-	.multicommand	= default_spi_send_multicommand,
 	.read		= default_spi_read,
 	.write_256	= default_spi_write_256,
-	.write_aai	= default_spi_write_aai,
-	.probe_opcode	= default_spi_probe_opcode,
+	.delay		= serprog_delay,
 };
 
 static int sp_check_opbuf_usage(int bytes_to_be_added)
@@ -551,30 +570,48 @@ static void serprog_chip_readn(const struct flashctx *flash, uint8_t * buf,
 		sp_do_read_n(&(buf[addrm-addr]), addrm, lenm); // FIXME: return error
 }
 
+static void serprog_delay(const struct flashctx *flash, unsigned int usecs)
+{
+	unsigned char buf[4];
+	msg_pspew("%s usecs=%d\n", __func__, usecs);
+	if (!sp_check_commandavail(S_CMD_O_DELAY)) {
+		msg_pdbg2("serprog_delay used, but programmer doesn't support delays natively - emulating\n");
+		default_delay(usecs);
+		return;
+	}
+	if ((sp_max_write_n) && (sp_write_n_bytes))
+		sp_pass_writen();
+	sp_check_opbuf_usage(5);
+	buf[0] = ((usecs >> 0) & 0xFF);
+	buf[1] = ((usecs >> 8) & 0xFF);
+	buf[2] = ((usecs >> 16) & 0xFF);
+	buf[3] = ((usecs >> 24) & 0xFF);
+	sp_stream_buffer_op(S_CMD_O_DELAY, 4, buf);
+	sp_opbuf_usage += 5;
+	sp_prev_was_write = 0;
+}
+
 static const struct par_master par_master_serprog = {
+	.map_flash_region	= serprog_map,
 	.chip_readb	= serprog_chip_readb,
-	.chip_readw	= fallback_chip_readw,
-	.chip_readl	= fallback_chip_readl,
 	.chip_readn	= serprog_chip_readn,
 	.chip_writeb	= serprog_chip_writeb,
-	.chip_writew	= fallback_chip_writew,
-	.chip_writel	= fallback_chip_writel,
-	.chip_writen	= fallback_chip_writen,
+	.delay		= serprog_delay,
 };
 
 static enum chipbustype serprog_buses_supported = BUS_NONE;
 
-static int serprog_init(void)
+static int serprog_init(const struct programmer_cfg *cfg)
 {
 	uint16_t iface;
 	unsigned char pgmname[17];
 	unsigned char rbuf[3];
 	unsigned char c;
 	char *device;
-	int have_device = 0;
+	bool have_device = false;
 
 	/* the parameter is either of format "dev=/dev/device[:baud]" or "ip=ip:port" */
-	device = extract_programmer_param_str("dev");
+	device = extract_programmer_param_str(cfg, "dev");
 	if (device && strlen(device)) {
 		char *baud_str = strstr(device, ":");
 		if (baud_str != NULL) {
@@ -598,7 +635,7 @@ static int serprog_init(void)
 				free(device);
 				return 1;
 			}
-			have_device++;
+			have_device = true;
 		}
 	}
 
@@ -611,7 +648,7 @@ static int serprog_init(void)
 	}
 	free(device);
 
-	device = extract_programmer_param_str("ip");
+	device = extract_programmer_param_str(cfg, "ip");
 	if (have_device && device) {
 		msg_perr("Error: Both host and device specified.\n"
 			 "Please use either dev= or ip= but not both.\n");
@@ -637,7 +674,7 @@ static int serprog_init(void)
 				free(device);
 				return 1;
 			}
-			have_device++;
+			have_device = true;
 		}
 	}
 	if (device && !strlen(device)) {
@@ -707,7 +744,7 @@ static int serprog_init(void)
 	/* Check for the minimum operational set of commands. */
 	if (serprog_buses_supported & BUS_SPI) {
 		uint8_t bt = BUS_SPI;
-		char *spispeed;
+		char *spispeed, *cs;
 		if (sp_check_commandavail(S_CMD_O_SPIOP) == 0) {
 			msg_perr("Error: SPI operation not supported while the "
 				 "bustype is SPI\n");
@@ -739,7 +776,7 @@ static int serprog_init(void)
 			spi_master_serprog.max_data_read = v;
 			msg_pdbg(MSGHEADER "Maximum read-n length is %d\n", v);
 		}
-		spispeed = extract_programmer_param_str("spispeed");
+		spispeed = extract_programmer_param_str(cfg, "spispeed");
 		if (spispeed && strlen(spispeed)) {
 			uint32_t f_spi_req, f_spi;
 			uint8_t buf[4];
@@ -787,6 +824,33 @@ static int serprog_init(void)
 			}
 		}
 		free(spispeed);
+		cs = extract_programmer_param_str(cfg, "cs");
+		if (cs && strlen(cs)) {
+			char *endptr = NULL;
+			errno = 0;
+			unsigned long cs_num = strtoul(cs, &endptr, 0);
+			if (errno || *endptr || cs_num > 255) {
+				msg_perr("Error: Invalid chip select requested! "
+				         "Only 0-255 are valid.\n");
+				free(cs);
+				goto init_err_cleanup_exit;
+			}
+			if (!sp_check_commandavail(S_CMD_S_SPI_CS)) {
+				msg_perr("Error: Setting SPI chip select is not supported!\n");
+				free(cs);
+				goto init_err_cleanup_exit;
+			}
+			msg_pdbg(MSGHEADER "Requested to use chip select %lu.\n", cs_num);
+			uint8_t cs_num8 = cs_num;
+			if (sp_docommand(S_CMD_S_SPI_CS, 1, &cs_num8, 0, NULL)) {
+				msg_perr("Error: Chip select %u not supported "
+				         "by programmer!\n", cs_num8);
+				free(cs);
+				goto init_err_cleanup_exit;
+			}
+		}
+		free(cs);
+
 		bt = serprog_buses_supported;
 		if (sp_docommand(S_CMD_S_BUSTYPE, 1, &bt, 0, NULL))
 			goto init_err_cleanup_exit;
@@ -923,49 +987,10 @@ init_err_cleanup_exit:
 	return 1;
 }
 
-static void serprog_delay(unsigned int usecs)
-{
-	unsigned char buf[4];
-	msg_pspew("%s usecs=%d\n", __func__, usecs);
-	if (!sp_check_commandavail(S_CMD_O_DELAY)) {
-		msg_pdbg2("serprog_delay used, but programmer doesn't support delays natively - emulating\n");
-		internal_delay(usecs);
-		return;
-	}
-	if ((sp_max_write_n) && (sp_write_n_bytes))
-		sp_pass_writen();
-	sp_check_opbuf_usage(5);
-	buf[0] = ((usecs >> 0) & 0xFF);
-	buf[1] = ((usecs >> 8) & 0xFF);
-	buf[2] = ((usecs >> 16) & 0xFF);
-	buf[3] = ((usecs >> 24) & 0xFF);
-	sp_stream_buffer_op(S_CMD_O_DELAY, 4, buf);
-	sp_opbuf_usage += 5;
-	sp_prev_was_write = 0;
-}
-
-static void *serprog_map(const char *descr, uintptr_t phys_addr, size_t len)
-{
-	/* Serprog transmits 24 bits only and assumes the underlying implementation handles any remaining bits
-	 * correctly (usually setting them to one either in software (for FWH/LPC) or relying on the fact that
-	 * the hardware observes a subset of the address bits only). Combined with the standard mapping of
-	 * flashrom this creates a 16 MB-wide window just below the 4 GB boundary where serprog can operate (as
-	 * needed for non-SPI chips). Below we make sure that the requested range is within this window. */
-	if ((phys_addr & 0xFF000000) == 0xFF000000) {
-		return (void*)phys_addr;
-	}
-	msg_pwarn(MSGHEADER "requested mapping %s is incompatible: 0x%zx bytes at 0x%0*" PRIxPTR ".\n",
-		  descr, len, PRIxPTR_WIDTH, phys_addr);
-	return NULL;
-}
-
 const struct programmer_entry programmer_serprog = {
 	.name			= "serprog",
 	.type			= OTHER,
 				/* FIXME */
 	.devs.note		= "All programmer devices speaking the serprog protocol\n",
 	.init			= serprog_init,
-	.map_flash_region	= serprog_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= serprog_delay,
 };

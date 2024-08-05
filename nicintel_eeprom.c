@@ -71,11 +71,18 @@
 
 #define EE_PAGE_MASK 0x3f
 
-static uint8_t *nicintel_eebar;
-static struct pci_dev *nicintel_pci;
-static bool done_i20_write = false;
-
 #define UNPROG_DEVICE 0x1509
+
+struct nicintel_eeprom_data {
+	struct pci_dev *nicintel_pci;
+	uint8_t *nicintel_eebar;
+
+	/* Intel 82580 variable(s) */
+	uint32_t eec;
+
+	/* Intel I210 variable(s) */
+	bool done_i210_write;
+};
 
 /*
  * Warning: is_i210() below makes assumptions on these PCI ids.
@@ -108,8 +115,8 @@ static int nicintel_ee_probe_i210(struct flashctx *flash)
 	/* Emulated eeprom has a fixed size of 4 KB */
 	flash->chip->total_size = 4;
 	flash->chip->page_size = flash->chip->total_size * 1024;
-	flash->chip->tested = TEST_OK_PREW;
-	flash->chip->gran = write_gran_1byte_implicit_erase;
+	flash->chip->tested = TEST_OK_PREWB;
+	flash->chip->gran = WRITE_GRAN_1BYTE_IMPLICIT_ERASE;
 	flash->chip->block_erasers->eraseblocks[0].size = flash->chip->page_size;
 	flash->chip->block_erasers->eraseblocks[0].count = 1;
 
@@ -118,10 +125,12 @@ static int nicintel_ee_probe_i210(struct flashctx *flash)
 
 static int nicintel_ee_probe_82580(struct flashctx *flash)
 {
-	if (nicintel_pci->device_id == UNPROG_DEVICE)
+	const struct nicintel_eeprom_data *data = flash->mst->opaque.data;
+
+	if (data->nicintel_pci->device_id == UNPROG_DEVICE)
 		flash->chip->total_size = 16; /* Fall back to minimum supported size. */
 	else {
-		uint32_t tmp = pci_mmio_readl(nicintel_eebar + EEC);
+		uint32_t tmp = pci_mmio_readl(data->nicintel_eebar + EEC);
 		tmp = ((tmp >> EE_SIZE) & EE_SIZE_MASK);
 		switch (tmp) {
 		case 7:
@@ -131,14 +140,14 @@ static int nicintel_ee_probe_82580(struct flashctx *flash)
 			flash->chip->total_size = 32;
 			break;
 		default:
-			msg_cerr("Unsupported chip size 0x%x\n", tmp);
+			msg_cerr("Unsupported chip size 0x%"PRIx32"\n", tmp);
 			return 0;
 		}
 	}
 
 	flash->chip->page_size = EE_PAGE_MASK + 1;
-	flash->chip->tested = TEST_OK_PREW;
-	flash->chip->gran = write_gran_1byte_implicit_erase;
+	flash->chip->tested = TEST_OK_PREWB;
+	flash->chip->gran = WRITE_GRAN_1BYTE_IMPLICIT_ERASE;
 	flash->chip->block_erasers->eraseblocks[0].size = (EE_PAGE_MASK + 1);
 	flash->chip->block_erasers->eraseblocks[0].count = (flash->chip->total_size * 1024) / (EE_PAGE_MASK + 1);
 
@@ -146,15 +155,15 @@ static int nicintel_ee_probe_82580(struct flashctx *flash)
 }
 
 #define MAX_ATTEMPTS 10000000
-static int nicintel_ee_read_word(unsigned int addr, uint16_t *data)
+static int nicintel_ee_read_word(uint8_t *eebar, unsigned int addr, uint16_t *data)
 {
 	uint32_t tmp = BIT(EERD_START) | (addr << EERD_ADDR);
-	pci_mmio_writel(tmp, nicintel_eebar + EERD);
+	pci_mmio_writel(tmp, eebar + EERD);
 
 	/* Poll done flag. 10.000.000 cycles seem to be enough. */
 	uint32_t i;
 	for (i = 0; i < MAX_ATTEMPTS; i++) {
-		tmp = pci_mmio_readl(nicintel_eebar + EERD);
+		tmp = pci_mmio_readl(eebar + EERD);
 		if (tmp & BIT(EERD_DONE)) {
 			*data = (tmp >> EERD_DATA) & 0xffff;
 			return 0;
@@ -166,12 +175,13 @@ static int nicintel_ee_read_word(unsigned int addr, uint16_t *data)
 
 static int nicintel_ee_read(struct flashctx *flash, uint8_t *buf, unsigned int addr, unsigned int len)
 {
+	const struct nicintel_eeprom_data *opaque_data = flash->mst->opaque.data;
 	uint16_t data;
 
 	/* The NIC interface always reads 16 b words so we need to convert the address and handle odd address
 	 * explicitly at the start (and also at the end in the loop below). */
 	if (addr & 1) {
-		if (nicintel_ee_read_word(addr / 2, &data))
+		if (nicintel_ee_read_word(opaque_data->nicintel_eebar, addr / 2, &data))
 			return -1;
 		*buf++ = data & 0xff;
 		addr++;
@@ -179,7 +189,7 @@ static int nicintel_ee_read(struct flashctx *flash, uint8_t *buf, unsigned int a
 	}
 
 	while (len > 0) {
-		if (nicintel_ee_read_word(addr / 2, &data))
+		if (nicintel_ee_read_word(opaque_data->nicintel_eebar, addr / 2, &data))
 			return -1;
 		*buf++ = data & 0xff;
 		addr++;
@@ -194,19 +204,19 @@ static int nicintel_ee_read(struct flashctx *flash, uint8_t *buf, unsigned int a
 	return 0;
 }
 
-static int nicintel_ee_write_word_i210(unsigned int addr, uint16_t data)
+static int nicintel_ee_write_word_i210(uint8_t *eebar, unsigned int addr, uint16_t data)
 {
 	uint32_t eewr;
 
 	eewr = addr << EEWR_ADDR;
 	eewr |= data << EEWR_DATA;
 	eewr |= BIT(EEWR_CMDV);
-	pci_mmio_writel(eewr, nicintel_eebar + EEWR);
+	pci_mmio_writel(eewr, eebar + EEWR);
 
-	programmer_delay(5);
+	default_delay(5);
 	int i;
 	for (i = 0; i < MAX_ATTEMPTS; i++)
-		if (pci_mmio_readl(nicintel_eebar + EEWR) & BIT(EEWR_DONE))
+		if (pci_mmio_readl(eebar + EEWR) & BIT(EEWR_DONE))
 			return 0;
 	return -1;
 }
@@ -214,12 +224,13 @@ static int nicintel_ee_write_word_i210(unsigned int addr, uint16_t data)
 static int nicintel_ee_write_i210(struct flashctx *flash, const uint8_t *buf,
 				  unsigned int addr, unsigned int len)
 {
-	done_i20_write = true;
+	struct nicintel_eeprom_data *opaque_data = flash->mst->opaque.data;
+	opaque_data->done_i210_write = true;
 
 	if (addr & 1) {
 		uint16_t data;
 
-		if (nicintel_ee_read_word(addr / 2, &data)) {
+		if (nicintel_ee_read_word(opaque_data->nicintel_eebar, addr / 2, &data)) {
 			msg_perr("Timeout reading heading byte\n");
 			return -1;
 		}
@@ -227,7 +238,7 @@ static int nicintel_ee_write_i210(struct flashctx *flash, const uint8_t *buf,
 		data &= 0xff;
 		data |= (buf ? (buf[0]) : 0xff) << 8;
 
-		if (nicintel_ee_write_word_i210(addr / 2, data)) {
+		if (nicintel_ee_write_word_i210(opaque_data->nicintel_eebar, addr / 2, data)) {
 			msg_perr("Timeout writing heading word\n");
 			return -1;
 		}
@@ -242,7 +253,7 @@ static int nicintel_ee_write_i210(struct flashctx *flash, const uint8_t *buf,
 		uint16_t data;
 
 		if (len == 1) {
-			if (nicintel_ee_read_word(addr / 2, &data)) {
+			if (nicintel_ee_read_word(opaque_data->nicintel_eebar, addr / 2, &data)) {
 				msg_perr("Timeout reading tail byte\n");
 				return -1;
 			}
@@ -256,7 +267,7 @@ static int nicintel_ee_write_i210(struct flashctx *flash, const uint8_t *buf,
 				data = 0xffff;
 		}
 
-		if (nicintel_ee_write_word_i210(addr / 2, data)) {
+		if (nicintel_ee_write_word_i210(opaque_data->nicintel_eebar, addr / 2, data)) {
 			msg_perr("Timeout writing Shadow RAM\n");
 			return -1;
 		}
@@ -278,35 +289,35 @@ static int nicintel_ee_erase_i210(struct flashctx *flash, unsigned int addr, uns
 	return nicintel_ee_write_i210(flash, NULL, addr, len);
 }
 
-static int nicintel_ee_bitset(int reg, int bit, bool val)
+static int nicintel_ee_bitset(uint8_t *eebar, int reg, int bit, bool val)
 {
 	uint32_t tmp;
 
-	tmp = pci_mmio_readl(nicintel_eebar + reg);
+	tmp = pci_mmio_readl(eebar + reg);
 	if (val)
 		tmp |= BIT(bit);
 	else
 		tmp &= ~BIT(bit);
-	pci_mmio_writel(tmp, nicintel_eebar + reg);
+	pci_mmio_writel(tmp, eebar + reg);
 
 	return -1;
 }
 
 /* Shifts one byte out while receiving another one by bitbanging (denoted "direct access" in the datasheet). */
-static int nicintel_ee_bitbang(uint8_t mosi, uint8_t *miso)
+static int nicintel_ee_bitbang(uint8_t *eebar, uint8_t mosi, uint8_t *miso)
 {
 	uint8_t out = 0x0;
 
 	int i;
 	for (i = 7; i >= 0; i--) {
-		nicintel_ee_bitset(EEC, EE_SI, mosi & BIT(i));
-		nicintel_ee_bitset(EEC, EE_SCK, 1);
+		nicintel_ee_bitset(eebar, EEC, EE_SI, mosi & BIT(i));
+		nicintel_ee_bitset(eebar, EEC, EE_SCK, 1);
 		if (miso != NULL) {
-			uint32_t tmp = pci_mmio_readl(nicintel_eebar + EEC);
+			uint32_t tmp = pci_mmio_readl(eebar + EEC);
 			if (tmp & BIT(EE_SO))
 				out |= BIT(i);
 		}
-		nicintel_ee_bitset(EEC, EE_SCK, 0);
+		nicintel_ee_bitset(eebar, EEC, EE_SCK, 0);
 	}
 
 	if (miso != NULL)
@@ -316,18 +327,18 @@ static int nicintel_ee_bitbang(uint8_t mosi, uint8_t *miso)
 }
 
 /* Polls the WIP bit of the status register of the attached EEPROM via bitbanging. */
-static int nicintel_ee_ready(void)
+static int nicintel_ee_ready(uint8_t *eebar)
 {
 	unsigned int i;
 	for (i = 0; i < 1000; i++) {
-		nicintel_ee_bitset(EEC, EE_CS, 0);
+		nicintel_ee_bitset(eebar, EEC, EE_CS, 0);
 
-		nicintel_ee_bitbang(JEDEC_RDSR, NULL);
+		nicintel_ee_bitbang(eebar, JEDEC_RDSR, NULL);
 		uint8_t rdsr;
-		nicintel_ee_bitbang(0x00, &rdsr);
+		nicintel_ee_bitbang(eebar, 0x00, &rdsr);
 
-		nicintel_ee_bitset(EEC, EE_CS, 1);
-		programmer_delay(1);
+		nicintel_ee_bitset(eebar, EEC, EE_CS, 1);
+		default_delay(1);
 		if (!(rdsr & SPI_SR_WIP)) {
 			return 0;
 		}
@@ -336,57 +347,60 @@ static int nicintel_ee_ready(void)
 }
 
 /* Requests direct access to the SPI pins. */
-static int nicintel_ee_req(void)
+static int nicintel_ee_req(uint8_t *eebar)
 {
 	uint32_t tmp;
-	nicintel_ee_bitset(EEC, EE_REQ, 1);
+	nicintel_ee_bitset(eebar, EEC, EE_REQ, 1);
 
-	tmp = pci_mmio_readl(nicintel_eebar + EEC);
+	tmp = pci_mmio_readl(eebar + EEC);
 	if (!(tmp & BIT(EE_GNT))) {
 		msg_perr("Enabling eeprom access failed.\n");
 		return 1;
 	}
 
-	nicintel_ee_bitset(EEC, EE_SCK, 0);
+	nicintel_ee_bitset(eebar, EEC, EE_SCK, 0);
 	return 0;
 }
 
 static int nicintel_ee_write_82580(struct flashctx *flash, const uint8_t *buf, unsigned int addr, unsigned int len)
 {
-	if (nicintel_ee_req())
+	const struct nicintel_eeprom_data *opaque_data = flash->mst->opaque.data;
+	uint8_t *eebar = opaque_data->nicintel_eebar;
+
+	if (nicintel_ee_req(eebar))
 		return -1;
 
 	int ret = -1;
-	if (nicintel_ee_ready())
+	if (nicintel_ee_ready(eebar))
 		goto out;
 
 	while (len > 0) {
 		/* WREN */
-		nicintel_ee_bitset(EEC, EE_CS, 0);
-		nicintel_ee_bitbang(JEDEC_WREN, NULL);
-		nicintel_ee_bitset(EEC, EE_CS, 1);
-		programmer_delay(1);
+		nicintel_ee_bitset(eebar, EEC, EE_CS, 0);
+		nicintel_ee_bitbang(eebar, JEDEC_WREN, NULL);
+		nicintel_ee_bitset(eebar, EEC, EE_CS, 1);
+		default_delay(1);
 
 		/* data */
-		nicintel_ee_bitset(EEC, EE_CS, 0);
-		nicintel_ee_bitbang(JEDEC_BYTE_PROGRAM, NULL);
-		nicintel_ee_bitbang((addr >> 8) & 0xff, NULL);
-		nicintel_ee_bitbang(addr & 0xff, NULL);
+		nicintel_ee_bitset(eebar, EEC, EE_CS, 0);
+		nicintel_ee_bitbang(eebar, JEDEC_BYTE_PROGRAM, NULL);
+		nicintel_ee_bitbang(eebar, (addr >> 8) & 0xff, NULL);
+		nicintel_ee_bitbang(eebar, addr & 0xff, NULL);
 		while (len > 0) {
-			nicintel_ee_bitbang((buf) ? *buf++ : 0xff, NULL);
+			nicintel_ee_bitbang(eebar, (buf) ? *buf++ : 0xff, NULL);
 			len--;
 			addr++;
 			if (!(addr & EE_PAGE_MASK))
 				break;
 		}
-		nicintel_ee_bitset(EEC, EE_CS, 1);
-		programmer_delay(1);
-		if (nicintel_ee_ready())
+		nicintel_ee_bitset(eebar, EEC, EE_CS, 1);
+		default_delay(1);
+		if (nicintel_ee_ready(eebar))
 			goto out;
 	}
 	ret = 0;
 out:
-	nicintel_ee_bitset(EEC, EE_REQ, 0); /* Give up direct access. */
+	nicintel_ee_bitset(eebar, EEC, EE_REQ, 0); /* Give up direct access. */
 	return ret;
 }
 
@@ -395,49 +409,57 @@ static int nicintel_ee_erase_82580(struct flashctx *flash, unsigned int addr, un
 	return nicintel_ee_write_82580(flash, NULL, addr, len);
 }
 
-static int nicintel_ee_shutdown_i210(void *arg)
+static int nicintel_ee_shutdown_i210(void *opaque_data)
 {
-	if (!done_i20_write)
-		return 0;
+	struct nicintel_eeprom_data *data = opaque_data;
+	int ret = 0;
 
-	uint32_t flup = pci_mmio_readl(nicintel_eebar + EEC);
+	if (!data->done_i210_write)
+		goto out;
+
+	uint32_t flup = pci_mmio_readl(data->nicintel_eebar + EEC);
 
 	flup |= BIT(EE_FLUPD);
-	pci_mmio_writel(flup, nicintel_eebar + EEC);
+	pci_mmio_writel(flup, data->nicintel_eebar + EEC);
 
 	int i;
 	for (i = 0; i < MAX_ATTEMPTS; i++)
-		if (pci_mmio_readl(nicintel_eebar + EEC) & BIT(EE_FLUDONE))
-			return 0;
+		if (pci_mmio_readl(data->nicintel_eebar + EEC) & BIT(EE_FLUDONE))
+			goto out;
 
+	ret = -1;
 	msg_perr("Flash update failed\n");
 
-	return -1;
+out:
+	free(data);
+	return ret;
 }
 
-static int nicintel_ee_shutdown_82580(void *eecp)
+static int nicintel_ee_shutdown_82580(void *opaque_data)
 {
+	struct nicintel_eeprom_data *data = opaque_data;
+	uint8_t *eebar = data->nicintel_eebar;
 	int ret = 0;
 
-	if (nicintel_pci->device_id != UNPROG_DEVICE) {
-		uint32_t old_eec = *(uint32_t *)eecp;
+	if (data->nicintel_pci->device_id != UNPROG_DEVICE) {
+		uint32_t old_eec = data->eec;
 		/* Request bitbanging and unselect the chip first to be safe. */
-		if (nicintel_ee_req() || nicintel_ee_bitset(EEC, EE_CS, 1)) {
+		if (nicintel_ee_req(eebar) || nicintel_ee_bitset(eebar, EEC, EE_CS, 1)) {
 			ret = -1;
 			goto out;
 		}
 
 		/* Try to restore individual bits we care about. */
-		ret = nicintel_ee_bitset(EEC, EE_SCK, old_eec & BIT(EE_SCK));
-		ret |= nicintel_ee_bitset(EEC, EE_SI, old_eec & BIT(EE_SI));
-		ret |= nicintel_ee_bitset(EEC, EE_CS, old_eec & BIT(EE_CS));
+		ret = nicintel_ee_bitset(eebar, EEC, EE_SCK, old_eec & BIT(EE_SCK));
+		ret |= nicintel_ee_bitset(eebar, EEC, EE_SI, old_eec & BIT(EE_SI));
+		ret |= nicintel_ee_bitset(eebar, EEC, EE_CS, old_eec & BIT(EE_CS));
 		/* REQ will be cleared by hardware anyway after 2 seconds of inactivity
 		 * on the SPI pins (3.3.2.1). */
-		ret |= nicintel_ee_bitset(EEC, EE_REQ, old_eec & BIT(EE_REQ));
+		ret |= nicintel_ee_bitset(eebar, EEC, EE_REQ, old_eec & BIT(EE_REQ));
 	}
 
 out:
-	free(eecp);
+	free(data);
 	return ret;
 }
 
@@ -457,9 +479,13 @@ static const struct opaque_master opaque_master_nicintel_ee_i210 = {
 	.shutdown	= nicintel_ee_shutdown_i210,
 };
 
-static int nicintel_ee_init(void)
+static int nicintel_ee_init(const struct programmer_cfg *cfg)
 {
-	struct pci_dev *dev = pcidev_init(nics_intel_ee, PCI_BASE_ADDRESS_0);
+	const struct opaque_master *mst;
+	uint32_t eec = 0;
+	uint8_t *eebar;
+
+	struct pci_dev *dev = pcidev_init(cfg, nics_intel_ee, PCI_BASE_ADDRESS_0);
 	if (!dev)
 		return 1;
 
@@ -468,15 +494,12 @@ static int nicintel_ee_init(void)
 		return 1;
 
 	if (!is_i210(dev->device_id)) {
-		nicintel_eebar = rphysmap("Intel Gigabit NIC w/ SPI EEPROM", io_base_addr, MEMMAP_SIZE);
-		if (!nicintel_eebar)
+		eebar = rphysmap("Intel Gigabit NIC w/ SPI EEPROM", io_base_addr, MEMMAP_SIZE);
+		if (!eebar)
 			return 1;
 
-		uint32_t *eecp = NULL;
-
-		nicintel_pci = dev;
 		if (dev->device_id != UNPROG_DEVICE) {
-			uint32_t eec = pci_mmio_readl(nicintel_eebar + EEC);
+			eec = pci_mmio_readl(eebar + EEC);
 
 			/* C.f. 3.3.1.5 for the detection mechanism (maybe? contradicting
 			                the EE_PRES definition),
@@ -485,24 +508,29 @@ static int nicintel_ee_init(void)
 				msg_perr("Controller reports no EEPROM is present.\n");
 				return 1;
 			}
-
-			eecp = malloc(sizeof(uint32_t));
-			if (eecp == NULL)
-				return 1;
-			*eecp = eec;
 		}
 
-		return register_opaque_master(&opaque_master_nicintel_ee_82580, eecp);
+		mst = &opaque_master_nicintel_ee_82580;
 	} else {
-		nicintel_eebar = rphysmap("Intel i210 NIC w/ emulated EEPROM",
+		eebar = rphysmap("Intel i210 NIC w/ emulated EEPROM",
 					  io_base_addr + 0x12000, MEMMAP_SIZE);
-		if (!nicintel_eebar)
+		if (!eebar)
 			return 1;
 
-		return register_opaque_master(&opaque_master_nicintel_ee_i210, NULL);
+		mst = &opaque_master_nicintel_ee_i210;
 	}
 
-	return 1;
+	struct nicintel_eeprom_data *data = calloc(1, sizeof(*data));
+	if (!data) {
+		msg_perr("Unable to allocate space for OPAQUE master data\n");
+		return 1;
+	}
+	data->nicintel_pci = dev;
+	data->nicintel_eebar = eebar;
+	data->eec = eec;
+	data->done_i210_write = false;
+
+	return register_opaque_master(mst, data);
 }
 
 const struct programmer_entry programmer_nicintel_eeprom = {
@@ -510,7 +538,4 @@ const struct programmer_entry programmer_nicintel_eeprom = {
 	.type			= PCI,
 	.devs.dev		= nics_intel_ee,
 	.init			= nicintel_ee_init,
-	.map_flash_region	= fallback_map,
-	.unmap_flash_region	= fallback_unmap,
-	.delay			= internal_delay,
 };

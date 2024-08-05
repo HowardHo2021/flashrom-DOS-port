@@ -36,7 +36,6 @@ int flashrom_init(const int perform_selfcheck)
 {
 	if (perform_selfcheck && selfcheck())
 		return 1;
-	myusec_calibrate_delay();
 	return 0;
 }
 
@@ -91,26 +90,26 @@ const char *flashrom_version_info(void)
 
 struct flashrom_flashchip_info *flashrom_supported_flash_chips(void)
 {
-	unsigned int i = 0;
 	struct flashrom_flashchip_info *supported_flashchips =
 		malloc(flashchips_size * sizeof(*supported_flashchips));
 
-	if (supported_flashchips != NULL) {
-		for (; i < flashchips_size; ++i) {
-			supported_flashchips[i].vendor = flashchips[i].vendor;
-			supported_flashchips[i].name = flashchips[i].name;
-			supported_flashchips[i].tested.erase =
-				(enum flashrom_test_state)flashchips[i].tested.erase;
-			supported_flashchips[i].tested.probe =
-				(enum flashrom_test_state)flashchips[i].tested.probe;
-			supported_flashchips[i].tested.read =
-				(enum flashrom_test_state)flashchips[i].tested.read;
-			supported_flashchips[i].tested.write =
-				(enum flashrom_test_state)flashchips[i].tested.write;
-			supported_flashchips[i].total_size = flashchips[i].total_size;
-		}
-	} else {
+	if (!supported_flashchips) {
 		msg_gerr("Memory allocation error!\n");
+		return NULL;
+	}
+
+	for (unsigned int i = 0; i < flashchips_size; ++i) {
+		supported_flashchips[i].vendor = flashchips[i].vendor;
+		supported_flashchips[i].name = flashchips[i].name;
+		supported_flashchips[i].tested.erase =
+			(enum flashrom_test_state)flashchips[i].tested.erase;
+		supported_flashchips[i].tested.probe =
+			(enum flashrom_test_state)flashchips[i].tested.probe;
+		supported_flashchips[i].tested.read =
+			(enum flashrom_test_state)flashchips[i].tested.read;
+		supported_flashchips[i].tested.write =
+			(enum flashrom_test_state)flashchips[i].tested.write;
+		supported_flashchips[i].total_size = flashchips[i].total_size;
 	}
 
 	return supported_flashchips;
@@ -120,7 +119,6 @@ struct flashrom_board_info *flashrom_supported_boards(void)
 {
 #if CONFIG_INTERNAL == 1
 	int boards_known_size = 0;
-	int i = 0;
 	const struct board_info *binfo = boards_known;
 
 	while ((binfo++)->vendor)
@@ -132,15 +130,16 @@ struct flashrom_board_info *flashrom_supported_boards(void)
 	struct flashrom_board_info *supported_boards =
 		malloc(boards_known_size * sizeof(*supported_boards));
 
-	if (supported_boards != NULL) {
-		for (; i < boards_known_size; ++i) {
-			supported_boards[i].vendor = binfo[i].vendor;
-			supported_boards[i].name = binfo[i].name;
-			supported_boards[i].working =
-				(enum flashrom_test_state) binfo[i].working;
-		}
-	} else {
+	if (!supported_boards) {
 		msg_gerr("Memory allocation error!\n");
+		return NULL;
+	}
+
+	for (int i = 0; i < boards_known_size; ++i) {
+		supported_boards[i].vendor = binfo[i].vendor;
+		supported_boards[i].name = binfo[i].name;
+		supported_boards[i].working =
+			(enum flashrom_test_state) binfo[i].working;
 	}
 
 	return supported_boards;
@@ -153,7 +152,6 @@ struct flashrom_chipset_info *flashrom_supported_chipsets(void)
 {
 #if CONFIG_INTERNAL == 1
 	int chipset_enables_size = 0;
-	int i = 0;
 	const struct penable *chipset = chipset_enables;
 
 	while ((chipset++)->vendor_name)
@@ -165,17 +163,18 @@ struct flashrom_chipset_info *flashrom_supported_chipsets(void)
 	struct flashrom_chipset_info *supported_chipsets =
 		malloc(chipset_enables_size * sizeof(*supported_chipsets));
 
-	if (supported_chipsets != NULL) {
-		for (; i < chipset_enables_size; ++i) {
-			supported_chipsets[i].vendor = chipset[i].vendor_name;
-			supported_chipsets[i].chipset = chipset[i].device_name;
-			supported_chipsets[i].vendor_id = chipset[i].vendor_id;
-			supported_chipsets[i].chipset_id = chipset[i].device_id;
-			supported_chipsets[i].status =
-				(enum flashrom_test_state) chipset[i].status;
-		}
-	} else {
+	if (!supported_chipsets) {
 		msg_gerr("Memory allocation error!\n");
+		return NULL;
+	}
+
+	for (int i = 0; i < chipset_enables_size; ++i) {
+		supported_chipsets[i].vendor = chipset[i].vendor_name;
+		supported_chipsets[i].chipset = chipset[i].device_name;
+		supported_chipsets[i].vendor_id = chipset[i].vendor_id;
+		supported_chipsets[i].chipset_id = chipset[i].device_id;
+		supported_chipsets[i].status =
+			(enum flashrom_test_state) chipset[i].status;
 	}
 
 	return supported_chipsets;
@@ -221,8 +220,6 @@ int flashrom_flash_probe(struct flashrom_flashctx **const flashctx,
 	int i, ret = 2;
 	struct flashrom_flashctx second_flashctx = { 0, };
 
-	chip_to_probe = chip_name; /* chip_to_probe is global in flashrom.c */
-
 	*flashctx = malloc(sizeof(**flashctx));
 	if (!*flashctx)
 		return 1;
@@ -230,10 +227,10 @@ int flashrom_flash_probe(struct flashrom_flashctx **const flashctx,
 
 	for (i = 0; i < registered_master_count; ++i) {
 		int flash_idx = -1;
-		if (!ret || (flash_idx = probe_flash(&registered_masters[i], 0, *flashctx, 0)) != -1) {
+		if (!ret || (flash_idx = probe_flash(&registered_masters[i], 0, *flashctx, 0, chip_name)) != -1) {
 			ret = 0;
 			/* We found one chip, now check that there is no second match. */
-			if (probe_flash(&registered_masters[i], flash_idx + 1, &second_flashctx, 0) != -1) {
+			if (probe_flash(&registered_masters[i], flash_idx + 1, &second_flashctx, 0, chip_name) != -1) {
 				flashrom_layout_release(second_flashctx.default_layout);
 				free(second_flashctx.chip);
 				ret = 3;
@@ -267,21 +264,25 @@ void flashrom_flag_set(struct flashrom_flashctx *const flashctx,
 		       const enum flashrom_flag flag, const bool value)
 {
 	switch (flag) {
-		case FLASHROM_FLAG_FORCE:		flashctx->flags.force = value; break;
-		case FLASHROM_FLAG_FORCE_BOARDMISMATCH:	flashctx->flags.force_boardmismatch = value; break;
-		case FLASHROM_FLAG_VERIFY_AFTER_WRITE:	flashctx->flags.verify_after_write = value; break;
-		case FLASHROM_FLAG_VERIFY_WHOLE_CHIP:	flashctx->flags.verify_whole_chip = value; break;
+		case FLASHROM_FLAG_FORCE:			flashctx->flags.force = value; break;
+		case FLASHROM_FLAG_FORCE_BOARDMISMATCH:		flashctx->flags.force_boardmismatch = value; break;
+		case FLASHROM_FLAG_VERIFY_AFTER_WRITE:		flashctx->flags.verify_after_write = value; break;
+		case FLASHROM_FLAG_VERIFY_WHOLE_CHIP:		flashctx->flags.verify_whole_chip = value; break;
+		case FLASHROM_FLAG_SKIP_UNREADABLE_REGIONS:	flashctx->flags.skip_unreadable_regions = value; break;
+		case FLASHROM_FLAG_SKIP_UNWRITABLE_REGIONS:	flashctx->flags.skip_unwritable_regions = value; break;
 	}
 }
 
 bool flashrom_flag_get(const struct flashrom_flashctx *const flashctx, const enum flashrom_flag flag)
 {
 	switch (flag) {
-		case FLASHROM_FLAG_FORCE:		return flashctx->flags.force;
-		case FLASHROM_FLAG_FORCE_BOARDMISMATCH:	return flashctx->flags.force_boardmismatch;
-		case FLASHROM_FLAG_VERIFY_AFTER_WRITE:	return flashctx->flags.verify_after_write;
-		case FLASHROM_FLAG_VERIFY_WHOLE_CHIP:	return flashctx->flags.verify_whole_chip;
-		default:				return false;
+		case FLASHROM_FLAG_FORCE:			return flashctx->flags.force;
+		case FLASHROM_FLAG_FORCE_BOARDMISMATCH:		return flashctx->flags.force_boardmismatch;
+		case FLASHROM_FLAG_VERIFY_AFTER_WRITE:		return flashctx->flags.verify_after_write;
+		case FLASHROM_FLAG_VERIFY_WHOLE_CHIP:		return flashctx->flags.verify_whole_chip;
+		case FLASHROM_FLAG_SKIP_UNREADABLE_REGIONS:	return flashctx->flags.skip_unreadable_regions;
+		case FLASHROM_FLAG_SKIP_UNWRITABLE_REGIONS:	return flashctx->flags.skip_unwritable_regions;
+		default:					return false;
 	}
 }
 
@@ -299,7 +300,7 @@ int flashrom_layout_read_from_ifd(struct flashrom_layout **const layout, struct 
 		goto _free_ret;
 
 	msg_cinfo("Reading ich descriptor... ");
-	if (flashctx->chip->read(flashctx, desc, 0, 0x1000)) {
+	if (read_flash(flashctx, desc, 0, 0x1000)) {
 		msg_cerr("Read operation failed!\n");
 		msg_cinfo("FAILED.\n");
 		ret = 2;
@@ -360,6 +361,16 @@ static int flashrom_layout_parse_fmap(struct flashrom_layout **layout,
 		return 1;
 
 	for (i = 0, area = fmap->areas; i < fmap->nareas; i++, area++) {
+		if (area->size == 0) {
+			/* Layout regions use inclusive upper and lower bounds,
+			 * so it's impossible to represent a region with zero
+			 * size although it's allowed in fmap. */
+			msg_gwarn("Ignoring zero-size fmap region \"%s\";"
+				  " empty regions are unsupported.\n",
+				  area->name);
+			continue;
+		}
+
 		snprintf(name, sizeof(name), "%s", area->name);
 		if (flashrom_layout_add_region(l, area->offset, area->offset + area->size - 1, name)) {
 			flashrom_layout_release(l);

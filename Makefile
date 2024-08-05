@@ -31,11 +31,13 @@ STRIP_ARGS = -s
 INSTALL = install
 PREFIX  ?= /usr/local
 MANDIR  ?= $(PREFIX)/share/man
+BASHCOMPDIR ?= $(PREFIX)/share/bash-completion/completions
 CFLAGS  ?= -Os -Wall -Wextra -Wno-unused-parameter -Wshadow -Wmissing-prototypes -Wwrite-strings
 EXPORTDIR ?= .
 RANLIB  ?= ranlib
 PKG_CONFIG ?= pkg-config
 BUILD_DETAILS_FILE ?= build_details.txt
+SPHINXBUILD ?= sphinx-build
 
 # The following parameter changes the default programmer that will be used if there is no -p/--programmer
 # argument given when running flashrom. The predefined setting does not enable any default so that every
@@ -114,6 +116,7 @@ DEPENDS_ON_RAW_MEM_ACCESS := \
 	CONFIG_ATAPROMISE \
 	CONFIG_DRKAISER \
 	CONFIG_GFXNVIDIA \
+	CONFIG_INTERNAL \
 	CONFIG_INTERNAL_X86 \
 	CONFIG_IT8212 \
 	CONFIG_NICINTEL \
@@ -137,6 +140,7 @@ DEPENDS_ON_X86_PORT_IO := \
 	CONFIG_SATAMV \
 
 DEPENDS_ON_LIBPCI := \
+	CONFIG_ASM106X \
 	CONFIG_ATAHPT \
 	CONFIG_ATAPROMISE \
 	CONFIG_ATAVIA \
@@ -156,12 +160,14 @@ DEPENDS_ON_LIBPCI := \
 
 DEPENDS_ON_LIBUSB1 := \
 	CONFIG_CH341A_SPI \
+	CONFIG_CH347_SPI \
 	CONFIG_DEDIPROG \
 	CONFIG_DEVELOPERBOX_SPI \
 	CONFIG_DIGILENT_SPI \
 	CONFIG_PICKIT2_SPI \
 	CONFIG_RAIDEN_DEBUG_SPI \
 	CONFIG_STLINKV3_SPI \
+	CONFIG_DIRTYJTAG_SPI \
 
 DEPENDS_ON_LIBFTDI1 := \
 	CONFIG_FT2232_SPI \
@@ -203,31 +209,29 @@ endif
 CC_WORKING := $(call c_compile_test, Makefile.d/cc_test.c)
 
 # Configs for dependencies. Can be overwritten by commandline
+CONFIG_LIBFTDI1_VERSION    := $(call dependency_version, libftdi1)
 CONFIG_LIBFTDI1_CFLAGS     := $(call dependency_cflags, libftdi1)
 CONFIG_LIBFTDI1_LDFLAGS    := $(call dependency_ldflags, libftdi1)
 
-# Hack to keep legacy auto detection of Program Files (x86), Only active if none of the CONFIG_ variables for ni845x are set.
-ifeq ($(CONFIG_NI845X_LIBRARY_PATH)$(CONFIG_LIB_NI845X_CFLAGS)$(CONFIG_LIB_NI845X_LDFLAGS),)
-PROGRAMFILES_X86 = $(shell env | sed -n "s/^PROGRAMFILES(X86)=//p")
-ifneq ($(PROGRAMFILES_X86DIR),)
-ifneq ($(PROGRAMFILES_X86DIR), ${PROGRAMFILES})
-NI854_X86_LIBRARY_PATH := '${PROGRAMFILES_X86}\National Instruments\NI-845x\MS Visual C'
-endif
-endif
-endif
+CONFIG_NI845X_LIBRARY_PATH := 'C:\Program Files (x86)\National Instruments\NI-845x\MS Visual C'
+CONFIG_LIB_NI845X_CFLAGS   := -I$(CONFIG_NI845X_LIBRARY_PATH)
+CONFIG_LIB_NI845X_LDFLAGS  := -L$(CONFIG_NI845X_LIBRARY_PATH) -lni845x
 
-CONFIG_NI845X_LIBRARY_PATH := '${PROGRAMFILES}\National Instruments\NI-845x\MS Visual C'
-CONFIG_LIB_NI845X_CFLAGS   := -I$(CONFIG_NI845X_LIBRARY_PATH) $(if NI854_X86_LIBRARY_PATH, -I${NI854_X86_LIBRARY_PATH})
-CONFIG_LIB_NI845X_LDFLAGS  := -L$(CONFIG_NI845X_LIBRARY_PATH) $(if NI854_X86_LIBRARY_PATH, -L${NI854_X86_LIBRARY_PATH}) -lni845x
-
+CONFIG_LIBJAYLINK_VERSION  := $(call dependency_version, libjaylink)
 CONFIG_LIBJAYLINK_CFLAGS   := $(call dependency_cflags, libjaylink)
 CONFIG_LIBJAYLINK_LDFLAGS  := $(call dependency_ldflags, libjaylink)
 
+CONFIG_LIBUSB1_VERSION     := $(call dependency_version, libusb-1.0)
 CONFIG_LIBUSB1_CFLAGS      := $(call dependency_cflags, libusb-1.0)
 CONFIG_LIBUSB1_LDFLAGS     := $(call dependency_ldflags, libusb-1.0)
 
+CONFIG_LIBPCI_VERSION      := $(call dependency_version, libpci)
 CONFIG_LIBPCI_CFLAGS       := $(call dependency_cflags, libpci)
 CONFIG_LIBPCI_LDFLAGS      := $(call dependency_ldflags, libpci)
+
+CONFIG_SPHINXBUILD_VERSION :=
+CONFIG_SPHINXBUILD_MAJOR   := 0
+
 
 # Determine the destination OS, architecture and endian
 # IMPORTANT: The following lines must be placed before TARGET_OS, ARCH or ENDIAN
@@ -244,7 +248,7 @@ HAS_LIBJAYLINK      := $(call find_dependency, libjaylink)
 HAS_LIBUSB1         := $(call find_dependency, libusb-1.0)
 HAS_LIBPCI          := $(call find_dependency, libpci)
 
-HAS_PCI_OLD_GET_DEV := $(call c_compile_test, Makefile.d/pci_old_get_dev_test.c, $(CONFIG_LIBPCI_CFLAGS))
+HAS_GETOPT          := $(call c_compile_test, Makefile.d/getopt_test.c)
 HAS_FT232H          := $(call c_compile_test, Makefile.d/ft232h_test.c, $(CONFIG_LIBFTDI1_CFLAGS))
 HAS_UTSNAME         := $(call c_compile_test, Makefile.d/utsname_test.c)
 HAS_CLOCK_GETTIME   := $(call c_compile_test, Makefile.d/clock_gettime_test.c)
@@ -252,7 +256,9 @@ HAS_EXTERN_LIBRT    := $(call c_link_test, Makefile.d/clock_gettime_test.c, , -l
 HAS_LINUX_MTD       := $(call c_compile_test, Makefile.d/linux_mtd_test.c)
 HAS_LINUX_SPI       := $(call c_compile_test, Makefile.d/linux_spi_test.c)
 HAS_LINUX_I2C       := $(call c_compile_test, Makefile.d/linux_i2c_test.c)
+HAS_PCIUTILS        := $(call c_compile_test, Makefile.d/pciutils_test.c)
 HAS_SERIAL          := $(strip $(if $(filter $(TARGET_OS), DOS libpayload), no, yes))
+HAS_SPHINXBUILD     := $(shell command -v $(SPHINXBUILD) >/dev/null 2>/dev/null && echo yes || echo no)
 EXEC_SUFFIX         := $(strip $(if $(filter $(TARGET_OS), DOS MinGW), .exe))
 
 override CFLAGS += -Iinclude
@@ -264,6 +270,9 @@ override LDFLAGS += -lgetopt
 endif
 
 ifeq ($(TARGET_OS), $(filter $(TARGET_OS), MinGW Cygwin))
+$(call mark_unsupported,$(DEPENDS_ON_RAW_MEM_ACCESS))
+$(call mark_unsupported,$(DEPENDS_ON_X86_PORT_IO))
+$(call mark_unsupported,$(DEPENDS_ON_X86_MSR))
 FEATURE_FLAGS += -D'IS_WINDOWS=1'
 else
 FEATURE_FLAGS += -D'IS_WINDOWS=0'
@@ -364,14 +373,14 @@ endif
 # Additionally disable all drivers needing raw access (memory, PCI, port I/O)
 # on architectures with unknown raw access properties.
 # Right now those architectures are alpha hppa m68k sh s390
-ifneq ($(ARCH), $(filter $(ARCH), x86 mips ppc arm sparc arc))
+ifneq ($(ARCH), $(filter $(ARCH), x86 mips ppc arm sparc arc e2k))
 $(call mark_unsupported,$(DEPENDS_ON_RAW_MEM_ACCESS))
 endif
 
 ###############################################################################
 # Flash chip drivers and bus support infrastructure.
 
-CHIP_OBJS = jedec.o stm50.o w39.o w29ee011.o \
+CHIP_OBJS = jedec.o printlock.o stm50.o w39.o w29ee011.o \
 	sst28sf040.o 82802ab.o \
 	sst49lfxxxc.o sst_fwhub.o edi.o flashchips.o spi.o spi25.o spi25_statusreg.o \
 	spi95.o opaque.o sfdp.o en29lv640b.o at45db.o s25f.o \
@@ -380,29 +389,30 @@ CHIP_OBJS = jedec.o stm50.o w39.o w29ee011.o \
 ###############################################################################
 # Library code.
 
-LIB_OBJS = libflashrom.o layout.o flashrom.o udelay.o programmer.o programmer_table.o \
-	helpers.o ich_descriptors.o fmap.o platform/endian_$(ENDIAN).o platform/memaccess.o
+LIB_OBJS = libflashrom.o layout.o erasure_layout.o flashrom.o parallel.o programmer.o programmer_table.o \
+	helpers.o helpers_fileio.o ich_descriptors.o fmap.o platform/endian_$(ENDIAN).o platform/memaccess.o
 
+ifeq ($(TARGET_OS), DOS)
+  LIB_OBJS += udelay_dos.o
+else
+  LIB_OBJS += udelay.o
+endif
 
 ###############################################################################
 # Frontend related stuff.
 
 CLI_OBJS = cli_classic.o cli_output.o cli_common.o print.o
 
-# versioninfo.inc stores metadata required to build a packaged flashrom. It is generated by the export rule and
-# imported below. If versioninfo.inc is not found and the variables are not defined by the user, the info will
-# be obtained using util/getrevision.sh, which is the common case during development.
--include versioninfo.inc
-VERSION ?= $(shell ./util/getrevision.sh --revision)
-MAN_DATE ?= $(shell ./util/getrevision.sh --date $(PROGRAM).8.tmpl 2>/dev/null)
-
-SCMDEF := -D'FLASHROM_VERSION="$(VERSION)"'
+VERSION ?= $(shell cat ./VERSION)
+VERSION_GIT ?= $(shell git describe 2>/dev/null)
+ifneq ($(VERSION_GIT),)
+  VERSION := "$(VERSION) (git:$(VERSION_GIT))"
+else
+  VERSION := "$(VERSION)"
+endif
 
 # No spaces in release names unless set explicitly
 RELEASENAME ?= $(shell echo "$(VERSION)" | sed -e 's/ /_/')
-
-# If a VCS is found then try to install hooks.
-$(shell ./util/getrevision.sh -c 2>/dev/null && ./util/git-hooks/install.sh)
 
 ###############################################################################
 # Default settings of CONFIG_* variables.
@@ -431,6 +441,9 @@ CONFIG_GFXNVIDIA ?= yes
 
 # Always enable SiI SATA controllers for now.
 CONFIG_SATASII ?= yes
+
+# ASMedia ASM106x
+CONFIG_ASM106X ?= yes
 
 # Highpoint (HPT) ATA/RAID controller support.
 # IMPORTANT: This code is not yet working!
@@ -512,8 +525,14 @@ CONFIG_IT8212 ?= yes
 # Winchiphead CH341A
 CONFIG_CH341A_SPI ?= yes
 
+# Winchiphead CH347
+CONFIG_CH347_SPI ?= yes
+
 # Digilent Development board JTAG
 CONFIG_DIGILENT_SPI ?= yes
+
+# DirtyJTAG
+CONFIG_DIRTYJTAG_SPI ?= yes
 
 # Disable J-Link for now.
 CONFIG_JLINK_SPI ?= no
@@ -523,6 +542,11 @@ CONFIG_NI845X_SPI ?= no
 
 # Disable wiki printing by default. It is only useful if you have wiki access.
 CONFIG_PRINT_WIKI ?= no
+
+# Minimum time in microseconds to suspend execution for (rather than polling)
+# when a delay is required. Larger values may perform better on machines with
+# low timer resolution, at the cost of increased power.
+CONFIG_DELAY_MINIMUM_SLEEP_US ?= 100000
 
 # Disable all features if CONFIG_NOTHING=yes is given unless CONFIG_EVERYTHING was also set
 ifeq ($(CONFIG_NOTHING), yes)
@@ -569,6 +593,7 @@ FEATURE_FLAGS += -D'CONFIG_DEFAULT_PROGRAMMER_NAME=NULL'
 endif
 
 FEATURE_FLAGS += -D'CONFIG_DEFAULT_PROGRAMMER_ARGS="$(CONFIG_DEFAULT_PROGRAMMER_ARGS)"'
+FEATURE_FLAGS += -D'CONFIG_DELAY_MINIMUM_SLEEP_US=$(CONFIG_DELAY_MINIMUM_SLEEP_US)'
 
 ################################################################################
 
@@ -576,13 +601,15 @@ ifeq ($(ARCH), x86)
 ifeq ($(CONFIG_INTERNAL) $(CONFIG_INTERNAL_X86), yes yes)
 FEATURE_FLAGS += -D'CONFIG_INTERNAL=1'
 PROGRAMMER_OBJS += processor_enable.o chipset_enable.o board_enable.o cbtable.o \
-	internal.o it87spi.o sb600spi.o amd_imc.o wbsio_spi.o mcp6x_spi.o \
-	ichspi.o dmi.o
+	internal.o internal_par.o it87spi.o sb600spi.o superio.o amd_imc.o wbsio_spi.o mcp6x_spi.o \
+	ichspi.o dmi.o known_boards.o
+ACTIVE_PROGRAMMERS += internal
 endif
 else
 ifeq ($(CONFIG_INTERNAL), yes)
 FEATURE_FLAGS += -D'CONFIG_INTERNAL=1'
-PROGRAMMER_OBJS += processor_enable.o chipset_enable.o board_enable.o cbtable.o internal.o
+PROGRAMMER_OBJS += processor_enable.o chipset_enable.o board_enable.o cbtable.o internal.o internal_par.o known_boards.o
+ACTIVE_PROGRAMMERS += internal
 endif
 endif
 
@@ -593,186 +620,240 @@ endif
 ifeq ($(CONFIG_SERPROG), yes)
 FEATURE_FLAGS += -D'CONFIG_SERPROG=1'
 PROGRAMMER_OBJS += serprog.o
+ACTIVE_PROGRAMMERS += serprog
 endif
 
 ifeq ($(CONFIG_RAYER_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_RAYER_SPI=1'
 PROGRAMMER_OBJS += rayer_spi.o
+ACTIVE_PROGRAMMERS += rayer_spi
 endif
 
 ifeq ($(CONFIG_RAIDEN_DEBUG_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_RAIDEN_DEBUG_SPI=1'
 PROGRAMMER_OBJS += raiden_debug_spi.o
+ACTIVE_PROGRAMMERS += raiden_debug_spi
 endif
 
 ifeq ($(CONFIG_PONY_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_PONY_SPI=1'
 PROGRAMMER_OBJS += pony_spi.o
+ACTIVE_PROGRAMMERS += pony_spi
 endif
 
 ifeq ($(CONFIG_NIC3COM), yes)
 FEATURE_FLAGS += -D'CONFIG_NIC3COM=1'
 PROGRAMMER_OBJS += nic3com.o
+ACTIVE_PROGRAMMERS += nic3com
 endif
 
 ifeq ($(CONFIG_GFXNVIDIA), yes)
 FEATURE_FLAGS += -D'CONFIG_GFXNVIDIA=1'
 PROGRAMMER_OBJS += gfxnvidia.o
+ACTIVE_PROGRAMMERS += gfxnvidia
 endif
 
 ifeq ($(CONFIG_SATASII), yes)
 FEATURE_FLAGS += -D'CONFIG_SATASII=1'
 PROGRAMMER_OBJS += satasii.o
+ACTIVE_PROGRAMMERS += satasii
+endif
+
+ifeq ($(CONFIG_ASM106X), yes)
+FEATURE_FLAGS += -D'CONFIG_ASM106X=1'
+PROGRAMMER_OBJS += asm106x.o
+ACTIVE_PROGRAMMERS += asm106x
 endif
 
 ifeq ($(CONFIG_ATAHPT), yes)
 FEATURE_FLAGS += -D'CONFIG_ATAHPT=1'
 PROGRAMMER_OBJS += atahpt.o
+ACTIVE_PROGRAMMERS += atahpt
 endif
 
 ifeq ($(CONFIG_ATAVIA), yes)
 FEATURE_FLAGS += -D'CONFIG_ATAVIA=1'
 PROGRAMMER_OBJS += atavia.o
+ACTIVE_PROGRAMMERS += atavia
 endif
 
 ifeq ($(CONFIG_ATAPROMISE), yes)
 FEATURE_FLAGS += -D'CONFIG_ATAPROMISE=1'
 PROGRAMMER_OBJS += atapromise.o
+ACTIVE_PROGRAMMERS += atapromise
 endif
 
 ifeq ($(CONFIG_IT8212), yes)
 FEATURE_FLAGS += -D'CONFIG_IT8212=1'
 PROGRAMMER_OBJS += it8212.o
+ACTIVE_PROGRAMMERS += it8212
 endif
 
 ifeq ($(CONFIG_FT2232_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_FT2232_SPI=1'
 PROGRAMMER_OBJS += ft2232_spi.o
+ACTIVE_PROGRAMMERS += ft2232_spi
 endif
 
 ifeq ($(CONFIG_USBBLASTER_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_USBBLASTER_SPI=1'
 PROGRAMMER_OBJS += usbblaster_spi.o
+ACTIVE_PROGRAMMERS += usbblaster_spi
 endif
 
 ifeq ($(CONFIG_PICKIT2_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_PICKIT2_SPI=1'
 PROGRAMMER_OBJS += pickit2_spi.o
+ACTIVE_PROGRAMMERS += pickit2_spi
 endif
 
 ifeq ($(CONFIG_STLINKV3_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_STLINKV3_SPI=1'
 PROGRAMMER_OBJS += stlinkv3_spi.o
+ACTIVE_PROGRAMMERS += stlinkv3_spi
 endif
 
 ifeq ($(CONFIG_PARADE_LSPCON), yes)
 FEATURE_FLAGS += -D'CONFIG_PARADE_LSPCON=1'
 PROGRAMMER_OBJS += parade_lspcon.o
+ACTIVE_PROGRAMMERS += parade_lspcon
 endif
 
 ifeq ($(CONFIG_MEDIATEK_I2C_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_MEDIATEK_I2C_SPI=1'
 PROGRAMMER_OBJS += mediatek_i2c_spi.o
+ACTIVE_PROGRAMMERS += mediatek_i2c_spi
 endif
 
 ifeq ($(CONFIG_REALTEK_MST_I2C_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_REALTEK_MST_I2C_SPI=1'
 PROGRAMMER_OBJS += realtek_mst_i2c_spi.o
+ACTIVE_PROGRAMMERS += realtek_mst_i2c_spi
 endif
 
 ifeq ($(CONFIG_DUMMY), yes)
 FEATURE_FLAGS += -D'CONFIG_DUMMY=1'
 PROGRAMMER_OBJS += dummyflasher.o
+ACTIVE_PROGRAMMERS += dummyflasher
 endif
 
 ifeq ($(CONFIG_DRKAISER), yes)
 FEATURE_FLAGS += -D'CONFIG_DRKAISER=1'
 PROGRAMMER_OBJS += drkaiser.o
+ACTIVE_PROGRAMMERS += drkaiser
 endif
 
 ifeq ($(CONFIG_NICREALTEK), yes)
 FEATURE_FLAGS += -D'CONFIG_NICREALTEK=1'
 PROGRAMMER_OBJS += nicrealtek.o
+ACTIVE_PROGRAMMERS += nicrealtek
 endif
 
 ifeq ($(CONFIG_NICNATSEMI), yes)
 FEATURE_FLAGS += -D'CONFIG_NICNATSEMI=1'
 PROGRAMMER_OBJS += nicnatsemi.o
+ACTIVE_PROGRAMMERS += nicnatsemi
 endif
 
 ifeq ($(CONFIG_NICINTEL), yes)
 FEATURE_FLAGS += -D'CONFIG_NICINTEL=1'
 PROGRAMMER_OBJS += nicintel.o
+ACTIVE_PROGRAMMERS += nicintel
 endif
 
 ifeq ($(CONFIG_NICINTEL_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_NICINTEL_SPI=1'
 PROGRAMMER_OBJS += nicintel_spi.o
+ACTIVE_PROGRAMMERS += nicintel_spi
 endif
 
 ifeq ($(CONFIG_NICINTEL_EEPROM), yes)
 FEATURE_FLAGS += -D'CONFIG_NICINTEL_EEPROM=1'
 PROGRAMMER_OBJS += nicintel_eeprom.o
+ACTIVE_PROGRAMMERS += nicintel_eeprom
 endif
 
 ifeq ($(CONFIG_OGP_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_OGP_SPI=1'
 PROGRAMMER_OBJS += ogp_spi.o
+ACTIVE_PROGRAMMERS += ogp_spi
 endif
 
 ifeq ($(CONFIG_BUSPIRATE_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_BUSPIRATE_SPI=1'
 PROGRAMMER_OBJS += buspirate_spi.o
+ACTIVE_PROGRAMMERS += buspirate_spi
 endif
 
 ifeq ($(CONFIG_DEDIPROG), yes)
 FEATURE_FLAGS += -D'CONFIG_DEDIPROG=1'
 PROGRAMMER_OBJS += dediprog.o
+ACTIVE_PROGRAMMERS += dediprog
 endif
 
 ifeq ($(CONFIG_DEVELOPERBOX_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_DEVELOPERBOX_SPI=1'
 PROGRAMMER_OBJS += developerbox_spi.o
+ACTIVE_PROGRAMMERS += developerbox_spi
 endif
 
 ifeq ($(CONFIG_SATAMV), yes)
 FEATURE_FLAGS += -D'CONFIG_SATAMV=1'
 PROGRAMMER_OBJS += satamv.o
+ACTIVE_PROGRAMMERS += satamv
 endif
 
 ifeq ($(CONFIG_LINUX_MTD), yes)
 FEATURE_FLAGS += -D'CONFIG_LINUX_MTD=1'
 PROGRAMMER_OBJS += linux_mtd.o
+ACTIVE_PROGRAMMERS += linux_mtd
 endif
 
 ifeq ($(CONFIG_LINUX_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_LINUX_SPI=1'
 PROGRAMMER_OBJS += linux_spi.o
+ACTIVE_PROGRAMMERS += linux_spi
 endif
 
 ifeq ($(CONFIG_MSTARDDC_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_MSTARDDC_SPI=1'
 PROGRAMMER_OBJS += mstarddc_spi.o
+ACTIVE_PROGRAMMERS += mstarddc_spi
 endif
 
 ifeq ($(CONFIG_CH341A_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_CH341A_SPI=1'
 PROGRAMMER_OBJS += ch341a_spi.o
+ACTIVE_PROGRAMMERS += ch341a_spi
+endif
+
+ifeq ($(CONFIG_CH347_SPI), yes)
+FEATURE_FLAGS += -D'CONFIG_CH347_SPI=1'
+PROGRAMMER_OBJS += ch347_spi.o
 endif
 
 ifeq ($(CONFIG_DIGILENT_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_DIGILENT_SPI=1'
 PROGRAMMER_OBJS += digilent_spi.o
+ACTIVE_PROGRAMMERS += digilent_spi
+endif
+
+ifeq ($(CONFIG_DIRTYJTAG_SPI), yes)
+FEATURE_FLAGS += -D'CONFIG_DIRTYJTAG_SPI=1'
+PROGRAMMER_OBJS += dirtyjtag_spi.o
+ACTIVE_PROGRAMMERS += dirtyjtag_spi
 endif
 
 ifeq ($(CONFIG_JLINK_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_JLINK_SPI=1'
 PROGRAMMER_OBJS += jlink_spi.o
+ACTIVE_PROGRAMMERS += jlink_spi
 endif
 
 ifeq ($(CONFIG_NI845X_SPI), yes)
 FEATURE_FLAGS += -D'CONFIG_NI845X_SPI=1'
 PROGRAMMER_OBJS += ni845x_spi.o
+ACTIVE_PROGRAMMERS += ni845x_spi
 endif
 
 USE_BITBANG_SPI := $(if $(call filter_deps,$(DEPENDS_ON_BITBANG_SPI)),yes,no)
@@ -791,7 +872,11 @@ LIB_OBJS += serial.o
 ifeq ($(TARGET_OS), Linux)
 LIB_OBJS += custom_baud_linux.o
 else
+ifeq ($(TARGET_OS), Darwin)
+LIB_OBJS += custom_baud_darwin.o
+else
 LIB_OBJS += custom_baud.o
+endif
 endif
 endif
 
@@ -881,17 +966,30 @@ override LDFLAGS += -lrt
 endif
 endif
 
+ifeq ($(HAS_GETOPT), yes)
+override CFLAGS  += -D'HAVE_GETOPT_H=1'
+endif
+
+ifeq ($(HAS_PCIUTILS), yes)
+override CFLAGS  += -D'HAVE_PCIUTILS_PCI_H=1'
+endif
+
 OBJS = $(CHIP_OBJS) $(PROGRAMMER_OBJS) $(LIB_OBJS)
 
+ifeq ($(HAS_SPHINXBUILD), yes)
+override CONFIG_SPHINXBUILD_VERSION := $(shell $(SPHINXBUILD) --version | cut -d' ' -f2 )
+override CONFIG_SPHINXBUILD_MAJOR   := $(shell echo "$(CONFIG_SPHINXBUILD_VERSION)" | cut -d'.' -f1 )
+endif
 
-all: config $(PROGRAM)$(EXEC_SUFFIX) $(PROGRAM).8
+
+all: $(PROGRAM)$(EXEC_SUFFIX) $(call has_dependency, $(HAS_SPHINXBUILD), man8/$(PROGRAM).8)
 ifeq ($(ARCH), x86)
 	@+$(MAKE) -C util/ich_descriptors_tool/ HOST_OS=$(HOST_OS) TARGET_OS=$(TARGET_OS)
 endif
 
 config:
 	@echo Building flashrom version $(VERSION)
-	@echo -n "C compiler found: "
+	@printf "C compiler found: "
 	@if [ $(CC_WORKING) = yes ]; \
 		then $(CC) --version 2>/dev/null | head -1; \
 		else echo no; echo Aborting.; exit 1; fi
@@ -904,18 +1002,17 @@ config:
 		echo "  This might work but usually does not, please beware."; fi
 	@echo "Target endian: $(ENDIAN)"
 	@if [ $(ENDIAN) = unknown ]; then echo Aborting.; exit 1; fi
-	@echo Dependency libpci found: $(HAS_LIBPCI)
+	@echo Dependency libpci found: $(HAS_LIBPCI) $(CONFIG_LIBPCI_VERSION)
 	@if [ $(HAS_LIBPCI) = yes ]; then			\
-		echo "  Checking for old \"pci_get_dev()\": $(HAS_PCI_OLD_GET_DEV)";\
 		echo "  CFLAGS: $(CONFIG_LIBPCI_CFLAGS)";	\
 		echo "  LDFLAGS: $(CONFIG_LIBPCI_LDFLAGS)";	\
 	fi
-	@echo Dependency libusb1 found: $(HAS_LIBUSB1)
+	@echo Dependency libusb1 found: $(HAS_LIBUSB1) $(CONFIG_LIBUSB1_VERSION)
 	@if [ $(HAS_LIBUSB1) = yes ]; then			\
 		echo "  CFLAGS: $(CONFIG_LIBUSB1_CFLAGS)";	\
 		echo "  LDFLAGS: $(CONFIG_LIBUSB1_LDFLAGS)";	\
 	fi
-	@echo Dependency libjaylink found: $(HAS_LIBJAYLINK)
+	@echo Dependency libjaylink found: $(HAS_LIBJAYLINK) $(CONFIG_LIBJAYLINK_VERSION)
 	@if [ $(HAS_LIBJAYLINK) = yes ]; then			\
 		echo "  CFLAGS: $(CONFIG_LIBJAYLINK_CFLAGS)";	\
 		echo "  LDFLAGS: $(CONFIG_LIBJAYLINK_LDFLAGS)";	\
@@ -925,17 +1022,19 @@ config:
 		echo "  CFLAGS: $(CONFIG_LIB_NI845X_CFLAGS)";	\
 		echo "  LDFLAGS: $(CONFIG_LIB_NI845X_LDFLAGS)";	\
 	fi
-	@echo Dependency libftdi1 found: $(HAS_LIBFTDI1)
+	@echo Dependency libftdi1 found: $(HAS_LIBFTDI1) $(CONFIG_LIBFTDI1_VERSION)
 	@if [ $(HAS_LIBFTDI1) = yes ]; then 			\
 		echo "  Checking for \"TYPE_232H\" in \"enum ftdi_chip_type\": $(HAS_FT232H)"; \
 		echo "  CFLAGS: $(CONFIG_LIBFTDI1_CFLAGS)";	\
 		echo "  LDFLAGS: $(CONFIG_LIBFTDI1_LDFLAGS)";	\
 	fi
+	@echo "Checking for header \"getopt.h\": $(HAS_GETOPT)"
 	@echo "Checking for header \"mtd/mtd-user.h\": $(HAS_LINUX_MTD)"
 	@echo "Checking for header \"linux/spi/spidev.h\": $(HAS_LINUX_SPI)"
 	@echo "Checking for header \"linux/i2c-dev.h\": $(HAS_LINUX_I2C)"
 	@echo "Checking for header \"linux/i2c.h\": $(HAS_LINUX_I2C)"
 	@echo "Checking for header \"sys/utsname.h\": $(HAS_UTSNAME)"
+	@echo "Checking for header \"pciutils/pci.h\": $(HAS_PCIUTILS)"
 	@echo "Checking for function \"clock_gettime\": $(HAS_CLOCK_GETTIME)"
 	@echo "Checking for external \"librt\": $(HAS_EXTERN_LIBRT)"
 	@if ! [ "$(PROGRAMMER_OBJS)" ]; then					\
@@ -946,9 +1045,10 @@ config:
 		echo "The following features are unavailable on your machine: $(UNSUPPORTED_FEATURES)" \
 		exit 1;								\
 	fi
+	@echo "Checking for program \"sphinx-build\": $(HAS_SPHINXBUILD) $(CONFIG_SPHINXBUILD_VERSION)"
 
-%.o: %.c config
-	$(CC) -MMD $(CFLAGS) $(CPPFLAGS) $(FLASHROM_CFLAGS) $(FEATURE_FLAGS) $(SCMDEF) -o $@ -c $<
+%.o: %.c | config
+	$(CC) -MMD $(CFLAGS) $(CPPFLAGS) $(FLASHROM_CFLAGS) $(FEATURE_FLAGS) -D'FLASHROM_VERSION=$(VERSION)'  -o $@ -c $<
 
 $(PROGRAM)$(EXEC_SUFFIX): $(CLI_OBJS) libflashrom.a
 	$(CC) -o $@ $^ $(LDFLAGS)
@@ -957,12 +1057,27 @@ libflashrom.a: $(OBJS)
 	$(AR) rcs $@ $^
 	$(RANLIB) $@
 
-$(PROGRAM).8.html: $(PROGRAM).8
-	@groff -mandoc -Thtml $< >$@
+man8/$(PROGRAM).8: doc/*
+#	When using sphinx-build prior to version 4.x, man pages are output
+#	to a directory named "8" instead of expected "man8". We fix that
+#	by renaming "8" to "man8" and creating symlink "8" pointing to "man8".
+	@if [ "$(HAS_SPHINXBUILD)" = "yes" ]; then			\
+		$(SPHINXBUILD) -Drelease=$(VERSION) -b man doc .;	\
+		if [ "$(CONFIG_SPHINXBUILD_MAJOR)" -lt 4 ]; then	\
+			if [ -d 8 -a ! -L 8 ]; then			\
+				rm -rf man8;				\
+				mv 8 man8;				\
+				ln -s man8 8;				\
+			fi						\
+		fi							\
+	else								\
+		echo "$(SPHINXBUILD) not found. Can't build man-page";	\
+		exit 1;							\
+	fi
 
-$(PROGRAM).8: $(PROGRAM).8.tmpl
-	@# Add the man page change date and version to the man page
-	@sed -e 's#.TH FLASHROM 8 .*#.TH FLASHROM 8 "$(MAN_DATE)" "$(VERSION)" "$(MAN_DATE)"#' <$< >$@
+$(PROGRAM).bash: util/$(PROGRAM).bash-completion.tmpl
+	@# Add to the bash completion file a list of enabled programmers.
+	sed -e 's/@PROGRAMMERS@/$(ACTIVE_PROGRAMMERS)/g' <$< >$@
 
 strip: $(PROGRAM)$(EXEC_SUFFIX)
 	$(STRIP) $(STRIP_ARGS) $(PROGRAM)$(EXEC_SUFFIX)
@@ -971,15 +1086,19 @@ strip: $(PROGRAM)$(EXEC_SUFFIX)
 # This includes all frontends and libflashrom.
 # We don't use EXEC_SUFFIX here because we want to clean everything.
 clean:
-	rm -f $(PROGRAM) $(PROGRAM).exe libflashrom.a $(filter-out Makefile.d, $(wildcard *.d *.o platform/*.d platform/*.o)) \
-		$(PROGRAM).8 $(PROGRAM).8.html $(BUILD_DETAILS_FILE)
+	rm -rf $(PROGRAM) $(PROGRAM).exe libflashrom.a $(filter-out Makefile.d, $(wildcard *.d *.o platform/*.d platform/*.o)) \
+		man8 8 .doctrees $(PROGRAM).bash $(BUILD_DETAILS_FILE)
 	@+$(MAKE) -C util/ich_descriptors_tool/ clean
 
-install: $(PROGRAM)$(EXEC_SUFFIX) $(PROGRAM).8
+install: $(PROGRAM)$(EXEC_SUFFIX) $(call has_dependency, $(HAS_SPHINXBUILD), man8/$(PROGRAM).8) $(PROGRAM).bash
 	mkdir -p $(DESTDIR)$(PREFIX)/sbin
-	mkdir -p $(DESTDIR)$(MANDIR)/man8
 	$(INSTALL) -m 0755 $(PROGRAM)$(EXEC_SUFFIX) $(DESTDIR)$(PREFIX)/sbin
-	$(INSTALL) -m 0644 $(PROGRAM).8 $(DESTDIR)$(MANDIR)/man8
+	mkdir -p $(DESTDIR)$(BASHCOMPDIR)
+	$(INSTALL) -m 0644 $(PROGRAM).bash $(DESTDIR)$(BASHCOMPDIR)
+ifeq ($(HAS_SPHINXBUILD), yes)
+	mkdir -p $(DESTDIR)$(MANDIR)/man8
+	$(INSTALL) -m 0644 man8/$(PROGRAM).8 $(DESTDIR)$(MANDIR)/man8
+endif
 
 libinstall: libflashrom.a include/libflashrom.h
 	mkdir -p $(DESTDIR)$(PREFIX)/lib
@@ -987,13 +1106,12 @@ libinstall: libflashrom.a include/libflashrom.h
 	mkdir -p $(DESTDIR)$(PREFIX)/include
 	$(INSTALL) -m 0644 include/libflashrom.h $(DESTDIR)$(PREFIX)/include
 
-_export: $(PROGRAM).8
+_export: man8/$(PROGRAM).8
 	@rm -rf "$(EXPORTDIR)/flashrom-$(RELEASENAME)"
 	@mkdir -p "$(EXPORTDIR)/flashrom-$(RELEASENAME)"
 	@git archive HEAD | tar -x -C "$(EXPORTDIR)/flashrom-$(RELEASENAME)"
 #	Generate versioninfo.inc containing metadata that would not be available in exported sources otherwise.
 	@echo "VERSION = $(VERSION)" > "$(EXPORTDIR)/flashrom-$(RELEASENAME)/versioninfo.inc"
-	@echo "MAN_DATE = $(MAN_DATE)" >> "$(EXPORTDIR)/flashrom-$(RELEASENAME)/versioninfo.inc"
 #	Restore modification date of all tracked files not marked 'export-ignore' in .gitattributes.
 #	sed is required to filter out file names having the attribute set.
 #	The sed program saves the file name in the hold buffer and then checks if the respective value is 'set'.
