@@ -65,7 +65,7 @@ struct cli_options {
 	char *layoutfile;
 	char *fmapfile;
 
-	unsigned int wp_start, wp_len;
+	long unsigned int wp_start, wp_len;
 	bool enable_wp, disable_wp, print_wp_status;
 	bool set_wp_range, set_wp_region, print_wp_ranges;
 	char *wp_region;
@@ -175,7 +175,7 @@ static bool check_file(FILE *file)
 	return true;
 }
 
-static int parse_wp_range(unsigned int *start, unsigned int *len)
+static int parse_wp_range(long unsigned int *start, long unsigned int *len)
 {
 	char *endptr = NULL, *token = NULL;
 
